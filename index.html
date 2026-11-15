@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="송달">
+<meta name="theme-color" content="#1b5e4a">
+<title>송달 방문표</title>
+<link rel="stylesheet" href="style.css">
+<script src="config.js" onerror="window.SONGDAL_CONFIG={}"></script>
+</head>
+<body>
+<div id="gate" class="gate hidden">
+  <h1>송달 방문표</h1>
+  <p id="gate-msg">처음 한 번, 데이터 저장소를 읽을 수 있는 GitHub 읽기 토큰을 넣어 주세요. 이 아이폰에만 저장돼요.</p>
+  <input id="gate-token" type="password" placeholder="github_pat_…" autocomplete="off">
+  <button id="gate-save">저장하고 열기</button>
+  <p class="hint">토큰 만드는 법은 맥 프로그램 설정 5번에 있어요.</p>
+</div>
+
+<div id="app" class="app hidden">
+  <header class="bar">
+    <div>
+      <div class="title" id="bar-title">방문표</div>
+      <div class="sub" id="bar-sub"></div>
+    </div>
+    <div class="bar-btns">
+      <button class="icon" id="btn-fit" title="전체 보기">전체</button>
+      <button class="icon" id="btn-list" title="목록">목록</button>
+      <button class="icon" id="btn-reload" title="새로고침">↻</button>
+    </div>
+  </header>
+  <div id="map" class="map"></div>
+  <div id="note" class="note hidden"></div>
+
+  <section id="sheet" class="sheet">
+    <div class="handle"></div>
+    <div id="next" class="next"></div>
+    <div id="list" class="list hidden"></div>
+  </section>
+</div>
+<script src="map.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
