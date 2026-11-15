@@ -10,20 +10,36 @@ const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 const nowSec = () => { const d = new Date(); return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds(); };
 
 /* ---------- 데이터 ---------- */
+function b64uToBytes(t) { t = t.replace(/-/g, "+").replace(/_/g, "/"); while (t.length % 4) t += "="; const bin = atob(t); return Uint8Array.from(bin, (c) => c.charCodeAt(0)); }
+function takeKeyFromHash() {
+  const m = (location.hash || "").match(/[#&]k=([A-Za-z0-9_\-]+)/);
+  if (m) { localStorage.setItem("songdal_key", m[1]); history.replaceState(null, "", location.pathname + location.search); }
+  return localStorage.getItem("songdal_key");
+}
 async function loadPlan() {
   if (LOCAL) { const r = await fetch("plan.json", { cache: "no-store" }); if (!r.ok) throw new Error("맥에서 아직 순서를 계산하지 않았어요."); return r.json(); }
-  const token = localStorage.getItem("songdal_token");
-  if (!token) { showGate(); throw new Error("gate"); }
-  const url = `https://api.github.com/repos/${CFG.owner}/${CFG.data_repo}/contents/plan.json`;
-  const r = await fetch(url, { headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github.raw+json", "X-GitHub-Api-Version": "2022-11-28" }, cache: "no-store" });
-  if (r.status === 401 || r.status === 403) { localStorage.removeItem("songdal_token"); showGate("토큰이 거부됐어요. 다시 넣어 주세요."); throw new Error("gate"); }
+  const keyB64u = takeKeyFromHash();
+  if (!keyB64u) { showGate(); throw new Error("gate"); }
+  const r = await fetch("plan.enc.txt?t=" + Date.now(), { cache: "no-store" });
   if (r.status === 404) throw new Error("올라온 방문표가 없어요. 맥에서 '아이폰에 올리기'를 눌러 주세요.");
-  if (!r.ok) throw new Error("GitHub 응답 오류 " + r.status);
-  const text = await r.text();
-  try { return JSON.parse(text); } catch (e) { return JSON.parse(atob(JSON.parse(text).content)); }
+  if (!r.ok) throw new Error("방문표를 받지 못했어요 (" + r.status + "). 잠시 후 ↻ 를 눌러 주세요.");
+  const raw = Uint8Array.from(atob((await r.text()).trim()), (c) => c.charCodeAt(0));
+  try {
+    const key = await crypto.subtle.importKey("raw", b64uToBytes(keyB64u), "AES-GCM", false, ["decrypt"]);
+    const data = await crypto.subtle.decrypt({ name: "AES-GCM", iv: raw.slice(0, 12) }, key, raw.slice(12));
+    return JSON.parse(new TextDecoder().decode(data));
+  } catch (e) {
+    showGate("열쇠가 맞지 않아요. 맥 설정 5번에서 '아이폰 연결 링크'를 다시 보내서 열어 주세요.");
+    throw new Error("gate");
+  }
 }
 function showGate(msg) { $("gate").classList.remove("hidden"); $("app").classList.add("hidden"); if (msg) $("gate-msg").textContent = msg; }
-$("gate-save").onclick = () => { const t = $("gate-token").value.trim(); if (!t) return; localStorage.setItem("songdal_token", t); $("gate").classList.add("hidden"); boot(); };
+$("gate-save").onclick = () => {
+  const t = $("gate-token").value.trim(); if (!t) return;
+  const m = t.match(/[#&]k=([A-Za-z0-9_\-]+)/) || t.match(/^([A-Za-z0-9_\-]{40,})$/);
+  if (!m) { $("gate-msg").textContent = "링크 형식이 아니에요. 맥에서 복사한 연결 링크를 그대로 붙여 주세요."; return; }
+  localStorage.setItem("songdal_key", m[1]); $("gate-token").value = ""; $("gate").classList.add("hidden"); boot();
+};
 
 const storeKey = () => "songdal_done_" + (S.plan ? S.plan.date : "");
 function loadDone() { try { S.done = JSON.parse(localStorage.getItem(storeKey()) || "{}"); } catch (e) { S.done = {}; } const o = localStorage.getItem(storeKey() + "_order"); S.order = o ? JSON.parse(o) : [...S.plan.order]; }
