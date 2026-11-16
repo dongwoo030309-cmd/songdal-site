@@ -65,15 +65,63 @@ $("gate-save").onclick = () => {
 /* 방문 결과: 마침을 누를 때 고름. 기록에는 전달 완료가 아닌 것만 남김(S.res). 맥 history.RESULTS 와 같은 이름 */
 const RESULTS = { ok: "전달 완료", absent: "부재", addr: "주소 문제" };
 const resultOf = (i) => (S.done[i] ? ((S.res || {})[i] && RESULTS[S.res[i]] ? S.res[i] : "ok") : null);
-/* 오늘 다시 방문: 부재·주소 문제였던 곳을 첫 방문 기록은 남긴 채(S.tries) 남은 순서 맨 뒤에 다시 넣음 */
-function revisit(i) {
+/* 오늘 다시 방문: 부재·주소 문제였던 곳을 첫 방문 기록은 남긴 채(S.tries) 남은 순서에 다시 넣음.
+   넣을 자리는 남은 순서의 모든 자리에 넣어 보고 가장 나은 곳(제시간에 갈 수 있는 곳 수 → 끝나는 시각 → 운전)으로 정함.
+   newRem 을 주면 그 순서대로 넣음(확인 창에서 보여 준 자리 그대로). */
+function revisit(i, newRem) {
   const rk = resultOf(i); if (!rk || rk === "ok") return;
   snapshot(`서류 ${docNumber(i)}번 다시 방문`);
   S.tries = S.tries || {}; (S.tries[i] = S.tries[i] || []).push({ at: S.done[i], res: rk });
   delete S.done[i]; if (S.res) delete S.res[i];
-  S.order = S.order.filter((x) => x !== i).concat([i]);
+  const rem = newRem || S.order.filter((x) => x !== i && !S.done[x]).concat([i]);
+  S.order = S.order.filter((x) => S.done[x]).concat(rem);
   saveDone();
 }
+function planRevisit(i) {
+  const rest = remaining().filter((x) => x !== i), base = liveBase(false);
+  let best = null;
+  for (let k = 0; k <= rest.length; k++) {
+    const cand = rest.slice(0, k).concat([i], rest.slice(k)); const sc = score(cand, base.origin, base.t);
+    if (!best || less(sc, best.sc)) best = { sc, order: cand, k };
+  }
+  const sim = simulate(best.order, base.origin, base.t);
+  return { order: best.order, pos: best.k + 1, row: (sim.rows || []).find((r) => r.i === i) || null, ok: sim.ok };
+}
+/* 다시 방문 확인 창: 넣을 자리·예상 도착·시간 조건을 먼저 보여 주고, 주소 문제였던 곳은 주소를 확인했는지 물음 */
+function askRevisit(i) {
+  const st = stopOf(i), rk = resultOf(i), pr = planRevisit(i), box = $("recalc"), r = pr.row;
+  const win = st.rule === "아무때나" ? "" : `${st.rule} ${hhmm(st.window[0])}–${hhmm(st.window[1])}`;
+  box.innerHTML = `<div class="rc-card">
+    <div class="rc-title">서류 ${docNumber(i)}번 다시 방문</div>
+    <div class="basis">${esc(st.label || st.place || "")} · 앞선 방문: ${RESULTS[rk]} ${hhmm(S.done[i])}</div>
+    <div class="rv-info">남은 순서 <b>${pr.pos}번째</b>에 넣어요${r ? ` · 예상 <b>${hhmm(r.arrive)}</b> 도착${r.wait > 60 ? ` (${hhmm(r.begin)}부터 송달)` : ""}` : ""}</div>
+    ${win ? `<div class="rv-cond${r && r.late ? " late" : ""}">${r && r.late ? `⚠ ${esc(win)} 조건이 지나서 <b>오늘 중 방문</b>으로 들어가요` : `${esc(win)} 조건 안에 갈 수 있어요`}</div>` : ""}
+    ${pr.ok ? "" : `<div class="rv-cond late">⚠ 다시 넣으면 퇴근 기한 안에 다 못 돌 수 있어요</div>`}
+    ${rk === "addr" ? `<div class="rv-cond">주소 문제였던 곳이에요. 주소를 확인한 뒤에 다시 넣어 주세요.</div>` : ""}
+    <div class="actions"><button class="ghost" id="rv-cancel">그만두기</button><button id="rv-go">${rk === "addr" ? "주소 확인했어요 · 넣기" : "다시 넣기"}</button></div></div>`;
+  box.classList.remove("hidden");
+  $("rv-cancel").onclick = () => box.classList.add("hidden");
+  $("rv-go").onclick = () => {
+    box.classList.add("hidden");
+    revisit(i, pr.order); S.ghost = { i, pos: pr.pos, ...(S.ghostDraft || {}) }; S.ghostDraft = null;
+    render(); toast(`서류 ${docNumber(i)}번을 남은 순서 ${pr.pos}번째에 다시 넣었어요`, "되돌리기", undo, 8000);
+  };
+}
+/* 기록한 곳의 줄을 누르면: 기록 내용과 [기록 취소] (목록 줄에서 바로 누르지 않게 따로 뺌) */
+function askRecord(i) {
+  const st = stopOf(i), rk = resultOf(i), box = $("recalc");
+  box.innerHTML = `<div class="rc-card">
+    <div class="rc-title">서류 ${docNumber(i)}번 · ${RESULTS[rk]} ${hhmm(S.done[i])}</div>
+    <div class="basis">${esc(st.label || st.place || "")}${triesText(i) ? ` · 앞선 방문: ${esc(triesText(i))}` : ""}</div>
+    <div class="hint" style="margin:10px 0">기록 취소는 잘못 누른 기록을 지울 때만 써요. 지우면 이 곳은 남은 순서로 돌아가요.</div>
+    <div class="actions">${rk !== "ok" ? `<button class="wide" id="ra-again">다시 방문…</button>` : ""}<button class="ghost warn" id="ra-undo">기록 취소</button><button class="ghost" id="ra-close">닫기</button></div></div>`;
+  box.classList.remove("hidden");
+  $("ra-close").onclick = () => box.classList.add("hidden");
+  if ($("ra-again")) $("ra-again").onclick = () => askRevisit(i);
+  $("ra-undo").onclick = () => { box.classList.add("hidden"); S.ghost = null; snapshot(`서류 ${docNumber(i)}번 기록 취소`); delete S.done[i]; if (S.res) delete S.res[i]; saveDone(); render(); toast(`서류 ${docNumber(i)}번 기록을 취소했어요`, "되돌리기", undo, 8000); };
+}
+/* 되돌리기 버튼 글씨: 무엇을 되돌리는지 (예: '↶ 서류 2번') */
+function undoText() { const h = (S.history || [])[S.history.length - 1]; const m = h && /서류 \d+번/.exec(h.label || ""); return m ? `↶ ${m[0]}` : "↶ 되돌리기"; }
 const triesText = (i) => ((S.tries || {})[i] || []).map((t) => `${RESULTS[t.res] || "방문"} ${hhmm(t.at)}`).join(", ");
 function resultCounts() { const c = { ok: 0, absent: 0, addr: 0 }; S.order.forEach((i) => { const r = resultOf(i); if (r) c[r]++; }); return c; }
 function countsText(c) { return [`전달 ${c.ok}`, c.absent ? `부재 ${c.absent}` : "", c.addr ? `주소 문제 ${c.addr}` : ""].filter(Boolean).join(" · "); }
@@ -150,7 +198,7 @@ function saveDone(quiet) {
 function snapshot(label) { S.history = S.history || []; S.history.push({ done: { ...S.done }, res: { ...(S.res || {}) }, tries: JSON.parse(JSON.stringify(S.tries || {})), order: [...S.order], label }); if (S.history.length > 50) S.history.shift(); }
 function undo() {
   const h = (S.history || []).pop(); if (!h) return;
-  S.done = h.done; S.res = h.res || {}; S.tries = h.tries || {}; S.order = h.order; S.selected = null; saveDone(); render(); toast("되돌렸어요: " + h.label);
+  S.ghost = null; S.done = h.done; S.res = h.res || {}; S.tries = h.tries || {}; S.order = h.order; S.selected = null; saveDone(); render(); toast("되돌렸어요: " + h.label);
 }
 
 /* ---------- 일정 계산 (파이썬 planner.simulate 와 같은 규칙) ---------- */
@@ -253,7 +301,7 @@ function render() {
     const isNext = i === rem[0];
     next.innerHTML = `
       ${isNext ? "" : `<div class="picked"><span>다음 차례가 아닌 곳을 보고 있어요</span><button id="btn-back">다음 방문(서류 ${docNumber(rem[0])}번)으로</button></div>`}
-      <div class="kicker"><span>${isNext ? "다음 방문" : "선택한 방문지"}${S.collapsed ? ` · <span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)}</span>` : ""}</span><span class="tools">${(S.history || []).length ? `<button class="tool" id="btn-undo" title="${esc(S.history[S.history.length - 1].label)}">↶ 되돌리기</button>` : ""}${rem.length >= 2 ? `<button class="tool" id="btn-recalc">🔄 순서 재계산</button>` : ""}</span></div>
+      <div class="kicker"><span>${isNext ? "다음 방문" : "선택한 방문지"}${S.collapsed ? ` · <span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)}</span>` : ""}</span><span class="tools">${(S.history || []).length ? `<button class="tool" id="btn-undo" title="${esc(S.history[S.history.length - 1].label)} 되돌리기">${undoText()} 되돌리기</button>` : ""}${rem.length >= 2 ? `<button class="tool" id="btn-recalc">🔄 재계산</button>` : ""}</span></div>
       ${triesText(i) ? `<div class="again-note">다시 방문하는 곳이에요 · 앞선 방문: ${esc(triesText(i))}</div>` : ""}
       <div class="docrow"><div class="docno"><small>서류</small><b>${docNumber(i)}</b></div><div class="name">${esc(st.label || st.place || "(이름 없음)")}</div></div>
       ${st.label && st.place ? `<div class="place">${esc(st.place)}</div>` : ""}
@@ -316,7 +364,6 @@ function renderList(etas) {
   if (!S.animating) $("btn-list").textContent = S.showList ? "카드" : "목록";
   if (!S.showList) return;
   const rem = remaining(), cnt = resultCounts(), nAgain = cnt.absent + cnt.addr;
-  if (S.listFilter === "again" && !nAgain) S.listFilter = "all";
   const f = S.listFilter || "all";
   const chip = (key, label) => `<button class="fchip${f === key ? " on" : ""}" data-f="${key}">${label}</button>`;
   box.innerHTML = `<div class="head"><input id="list-q" type="search" inputmode="search" autocomplete="off" placeholder="서류 번호·이름 찾기" value="${esc(S.listQ || "")}"></div>
@@ -325,31 +372,45 @@ function renderList(etas) {
   // 찾기: 숫자면 서류 번호가 그 숫자로 시작하는 곳, 글자면 이름·장소에 들어 있는 곳 (입력 중에 화면을 다시 그리지 않고 줄만 숨김)
   const applyQ = () => { const q = (S.listQ || "").trim().toLowerCase(); box.querySelectorAll(".item").forEach((el) => { el.style.display = !q || (/^\d+$/.test(q) ? el.dataset.doc.startsWith(q) : el.dataset.q.includes(q)) ? "" : "none"; }); };
   $("list-q").oninput = (e) => { S.listQ = e.target.value; applyQ(); };
-  box.querySelectorAll(".fchip").forEach((b) => (b.onclick = () => { S.listFilter = b.dataset.f; render(); $("sheet").scrollTop = 0; }));
+  box.querySelectorAll(".fchip").forEach((b) => (b.onclick = () => { S.listFilter = b.dataset.f; S.ghost = null; render(); $("sheet").scrollTop = 0; }));
   const shown = S.order.filter((i) => f === "all" || (f === "left" ? !S.done[i] : resultOf(i) && resultOf(i) !== "ok"));
-  if (!shown.length) box.insertAdjacentHTML("beforeend", `<div class="hint" style="padding:14px 0">${f === "left" ? "남은 곳이 없어요." : "해당하는 곳이 없어요."}</div>`);
-  shown.forEach((i) => {
+  if (!shown.length && !S.ghost) box.insertAdjacentHTML("beforeend", `<div class="hint" style="padding:14px 0">${f === "left" ? "남은 곳이 없어요." : f === "again" ? "다시 갈 곳이 없어요." : "해당하는 곳이 없어요."}</div>`);
+  // 방금 다시 넣은 곳: 원래 줄 자리에 같은 높이의 안내 줄을 남겨, 아래 줄들이 손가락 밑으로 올라오지 않게 함 (다른 조작을 하면 사라짐)
+  const ghostAt = S.ghost ? Math.max(0, Math.min(S.ghost.slot != null ? S.ghost.slot : shown.length, shown.length)) : -1;
+  const ghostRow = () => {
+    const g = document.createElement("div"); g.className = "item ghost-row"; g.style.minHeight = (S.ghost.h || 64) + "px";
+    g.innerHTML = `<div class="t">서류 ${docNumber(S.ghost.i)}번 → 남은 순서 ${S.ghost.pos}번째로 옮겼어요</div><button class="ghost" id="ghost-go">옮긴 곳 보기</button>`;
+    box.appendChild(g);
+    g.querySelector("button").onclick = () => {
+      const gi = S.ghost.i; S.ghost = null;
+      if (S.listFilter === "again") S.listFilter = "left";
+      render(); const row = box.querySelector(`.item[data-i="${gi}"]`);
+      if (row) { row.scrollIntoView({ block: "center" }); row.classList.add("flash"); setTimeout(() => row.classList.remove("flash"), 2200); }
+    };
+  };
+  shown.forEach((i, n) => {
+    if (n === ghostAt) ghostRow();
     const st = stopOf(i); const done = !!S.done[i]; const e = etas[i]; const cur = !done && rem[0] === i;
     const rk = resultOf(i);
     const div = document.createElement("div"); div.className = "item" + (done ? " done" : "") + (rk && rk !== "ok" ? " again" : "") + (cur ? " cur" : "");
-    div.dataset.doc = String(docNumber(i)); div.dataset.q = `${st.label || ""} ${st.place || ""}`.toLowerCase();
-    div.innerHTML = `<div class="n">${docNumber(i)}</div><div class="t"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b>${st.label && st.place ? " · " + esc(st.place) : ""}<small>${esc(st.rule)}${st.door && st.door.length ? " · 출입 " + esc(st.door[0].code) : ""}${done ? ` · <span class="rk ${rk}">${RESULTS[rk]}</span> ${hhmm(S.done[i])}` : e ? ` · 도착 ${hhmm(e.arrive)}${e.wait > 60 ? ` · <b class="from">${hhmm(e.begin)}부터 송달</b>` : ""}` : ""}${triesText(i) ? ` · <span class="rk absent">재방문</span> (${esc(triesText(i))})` : ""}</small></div>${done && rk !== "ok" ? `<span class="two"><button class="again">다시 방문</button><button class="ghost undo">기록 취소</button></span>` : done ? `<button class="ghost undo">기록 취소</button>` : `<button class="ghost go">보기</button>`}`;
-    const b = div.querySelector("button.undo") || div.querySelector("button");
-    const ag = div.querySelector("button.again");
-    if (ag) ag.onclick = () => { revisit(i); render(); toast(`서류 ${docNumber(i)}번을 남은 순서 맨 뒤에 다시 넣었어요`, "되돌리기", undo, 8000); };
-    if (done) b.onclick = () => { snapshot(`서류 ${docNumber(i)}번 기록 취소`); delete S.done[i]; if (S.res) delete S.res[i]; saveDone(); render(); };
-    else b.onclick = () => { S.selected = i; S.showList = false; render(); fitLeg(i); };
+    div.dataset.doc = String(docNumber(i)); div.dataset.i = String(i); div.dataset.q = `${st.label || ""} ${st.place || ""}`.toLowerCase();
+    div.innerHTML = `<div class="n">${docNumber(i)}</div><div class="t"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b>${st.label && st.place ? " · " + esc(st.place) : ""}<small>${esc(st.rule)}${st.door && st.door.length ? " · 출입 " + esc(st.door[0].code) : ""}${done ? ` · <span class="rk ${rk}">${RESULTS[rk]}</span> ${hhmm(S.done[i])}` : e ? ` · 도착 ${hhmm(e.arrive)}${e.wait > 60 ? ` · <b class="from">${hhmm(e.begin)}부터 송달</b>` : ""}${e.late ? ` · <b class="lateb">${esc(st.rule)} 시간 지남 · 오늘 중</b>` : ""}` : ""}${triesText(i) ? ` · <span class="rk absent">재방문</span> (${esc(triesText(i))})` : ""}</small></div>${done && rk !== "ok" ? `<button class="again">다시 방문…</button>` : done ? `<span class="more" aria-hidden="true">›</span>` : `<button class="ghost go">보기</button>`}`;
+    const ag = div.querySelector("button.again"), go = div.querySelector("button.go");
+    if (ag) ag.onclick = (ev) => { ev.stopPropagation(); S.ghost = null; const h = div.offsetHeight; askRevisit(i); S.ghostDraft = { slot: n, h }; };
+    if (go) go.onclick = () => { S.ghost = null; S.selected = i; S.showList = false; render(); fitLeg(i); };
+    if (done) div.onclick = () => askRecord(i);   // 기록한 곳: 줄을 누르면 기록 내용과 [기록 취소]
     box.appendChild(div);
   });
+  if (ghostAt === shown.length) ghostRow();
   applyQ();
 }
 let toastTimer;
 function toast(msg, actionLabel, actionFn, ms) {
   const n = $("note"); n.innerHTML = ""; const span = document.createElement("span"); span.textContent = msg; n.appendChild(span);
-  const hide = () => { n.classList.add("hidden"); document.body.classList.remove("toast-undo"); };
+  const hide = () => { n.classList.add("hidden"); document.body.classList.remove("toast-undo", "note-on"); };
   if (actionLabel) { const b = document.createElement("button"); b.className = "note-btn"; b.textContent = actionLabel; b.onclick = () => { hide(); actionFn(); }; n.appendChild(b); }
   document.body.classList.toggle("toast-undo", actionFn === undo);   // 같은 되돌리기가 카드에도 있어서 그 줄은 잠깐 숨김
-  n.classList.remove("hidden"); clearTimeout(toastTimer); toastTimer = setTimeout(hide, ms || 4000);
+  document.body.classList.add("note-on"); n.classList.remove("hidden"); clearTimeout(toastTimer); toastTimer = setTimeout(hide, ms || 4000);
 }
 
 /* ---------- 지도 ---------- */
@@ -656,7 +717,7 @@ async function boot() {
   const applyType = (t) => { S.map.setType(t); $("btn-maptype").textContent = t === "satellite" ? "일반 지도" : "위성 지도"; try { localStorage.setItem("songdal_maptype", t); } catch (e) {} };
   try { const t = localStorage.getItem("songdal_maptype"); if (t === "satellite") applyType(t); } catch (e) {}
   $("btn-maptype").onclick = () => { closeMenu(); applyType(S.map.type === "satellite" ? "normal" : "satellite"); };
-  $("btn-list").onclick = () => { if (S.animating) return stopAnimation(); S.showList = !S.showList; if (S.showList) setCollapsed(false); render(); };
+  $("btn-list").onclick = () => { S.ghost = null; if (S.animating) return stopAnimation(); S.showList = !S.showList; if (S.showList) setCollapsed(false); render(); };
   $("btn-reload").onclick = () => location.reload();
   $("btn-reset").onclick = () => { closeMenu(); if (confirm("오늘 기록(전달·부재·주소 문제)을 모두 지우고 순서도 처음대로 돌릴까요?")) { snapshot("기록 모두 지우기"); S.done = {}; S.res = {}; S.tries = {}; S.order = [...S.plan.order]; saveDone(); render(); followNext(); } };
   $("btn-send").onclick = () => { closeMenu(); sendResults(); };
