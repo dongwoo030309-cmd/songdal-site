@@ -21,7 +21,7 @@ async function loadPlan() {
   if (LOCAL) { const r = await fetch("plan.json", { cache: "no-store" }); if (!r.ok) throw new Error("맥에서 아직 순서를 계산하지 않았어요."); return r.json(); }
   const keyB64u = takeKeyFromHash();
   if (!keyB64u) { showGate(); throw new Error("gate"); }
-  let text = null;
+  let text = null, fresh = false;
   S.offline = false;
   try {
     const r = await fetch("plan.enc.txt?t=" + Date.now(), { cache: "no-store" });
@@ -29,9 +29,7 @@ async function loadPlan() {
     if (!r.ok) throw new Error("방문표를 받지 못했어요 (" + r.status + "). 잠시 후 ↻ 를 눌러 주세요.");
     text = (await r.text()).trim();
     if (r.headers.get("X-Songdal-Offline")) S.offline = true;
-    // 지난번에 받은 방문표(암호문)와 글자까지 같으면 같은 방문표. 다시 올린 것이면 암호문이 달라짐.
-    S.samePlanText = localStorage.getItem("songdal_last_enc") === text;
-    try { localStorage.setItem("songdal_last_enc", text); } catch (e) {}
+    fresh = true;
   } catch (err) {
     // 인터넷이 안 될 때: 마지막으로 받은 방문표(암호문)를 씀
     text = localStorage.getItem("songdal_last_enc");
@@ -43,7 +41,14 @@ async function loadPlan() {
   try {
     const key = await crypto.subtle.importKey("raw", b64uToBytes(keyB64u), "AES-GCM", false, ["decrypt"]);
     const data = await crypto.subtle.decrypt({ name: "AES-GCM", iv: raw.slice(0, 12) }, key, raw.slice(12));
-    return JSON.parse(new TextDecoder().decode(data));
+    const plan = JSON.parse(new TextDecoder().decode(data));
+    if (fresh) {
+      // 지난번에 '풀어서 쓴' 방문표(암호문)와 글자까지 같으면 같은 방문표. 다시 올린 것이면 암호문이 달라짐.
+      // 열쇠가 틀려 못 푼 암호문은 저장하지 않음 → 다시 시도해도 지난번 방문표와 제대로 비교됨.
+      S.samePlanText = localStorage.getItem("songdal_last_enc") === text;
+      try { localStorage.setItem("songdal_last_enc", text); } catch (e) {}
+    }
+    return plan;
   } catch (e) {
     showGate("열쇠가 맞지 않아요. 맥 설정 5번에서 '아이폰 연결 링크'를 다시 보내서 열어 주세요.");
     throw new Error("gate");
@@ -77,8 +82,12 @@ function stopKey(id) {
   return ("0000000" + a.toString(16)).slice(-8) + ("0000000" + (b >>> 0).toString(16)).slice(-8);
 }
 const keyOf = (st) => st.k || (st.id != null ? stopKey(st.id) : "i" + st.i);
-/* 이 방문표(계산본)의 지문: 계산 시각 + 고른 안 + 방문 순서(곳 기준). 다시 올린 방문표인지 가려냄 */
-function planSig() { return [S.plan.generated || "", S.plan.chosen || "", S.plan.order.map((i) => keyOf(stopOf(i))).join(",")].join("|"); }
+/* 이 방문표(계산본)의 지문: 계산 시각 + 고른 안 + 방문 순서(곳 기준) + 서류 번호. 맥 history.plan_sig 와 같은 값이어야 함 */
+function planSig() {
+  const o = S.plan.order, doc = S.plan.doc || {};
+  return [S.plan.generated || "", S.plan.chosen || "", o.map((i) => keyOf(stopOf(i))).join(","), o.map((i, n) => +doc[i] || n + 1).join(",")].join("|");
+}
+function sameKeys(a, b) { a = a || {}; const ka = Object.keys(a), kb = Object.keys(b); return ka.length === kb.length && kb.every((i) => a[i] === b[i]); }
 function planKeys() { const m = {}; S.plan.stops.forEach((st) => { m[st.i] = keyOf(st); }); return m; }
 function loadDone() {
   pruneOldDays();
@@ -87,7 +96,8 @@ function loadDone() {
   const meta = read("_plan", null), valid = new Set(S.plan.order);
   const samePerm = (o) => Array.isArray(o) && o.length === valid.size && new Set(o).size === o.length && o.every((i) => valid.has(i));
   S.carried = null;
-  if (meta && meta.sig !== planSig()) {
+  if (meta && (meta.sig !== planSig() || !sameKeys(meta.keys, planKeys()))) {
+    // (지문이 같아도 순번↔곳 대응이 바뀌었으면 다른 방문표로 봄)
     // 같은 날짜에 방문표가 다시 올라옴: 마침 기록을 '곳' 기준으로 새 방문표에 옮기고, 순서는 새 방문표대로
     const byKey = {}; S.plan.stops.forEach((st) => { if (valid.has(st.i)) byKey[keyOf(st)] = st.i; });
     const moved = {}; let kept = 0, lost = 0;
@@ -213,8 +223,8 @@ function render() {
     const i = S.selected && rem.includes(S.selected) ? S.selected : rem[0]; const st = stopOf(i); const e = etas[i];
     const isNext = i === rem[0];
     next.innerHTML = `
-      <div class="kicker"><span>${isNext ? "다음 방문" : "선택한 방문지"} · 서류 ${docNumber(i)}번</span><span>${doneCount}/${total} 완료${S.collapsed ? ` · <span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)}</span>` : ""}</span></div>
-      <div class="name">${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</div>
+      <div class="kicker"><span>${isNext ? "다음 방문" : "선택한 방문지"}</span><span>${doneCount}/${total} 완료${S.collapsed ? ` · <span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)}</span>` : ""}</span></div>
+      <div class="docrow"><div class="docno"><small>서류</small><b>${docNumber(i)}</b></div><div class="name">${esc(st.label || st.place || "(이름 없음)")}</div></div>
       ${st.label && st.place ? `<div class="place more-info">${esc(st.place)}</div>` : ""}
       ${st.door && st.door.length ? st.door.map((d) => `<div class="door"><span class="k">출입</span><span class="code">${esc(d.code)}</span>${d.note ? `<span class="note">${esc(d.note)}</span>` : ""}<div class="dn">${esc(d.name)}</div></div>`).join("") : ""}
       <div class="addr more-info">${esc(st.address)}${st.memo ? " · " + esc(st.memo) : ""}${st.folder && st.folder.includes(" + ") ? `<br><b>두 폴더 문건 함께 확인</b> (${esc(st.folder)})` : ""}</div>
@@ -253,7 +263,10 @@ function timesHtml(pl, e, base) {
 }
 function navLink(st) { const app = encodeURIComponent(LOCAL ? "songdal" : location.origin + location.pathname); return `nmap://navigation?dlat=${st.lat}&dlng=${st.lng}&dname=${encodeURIComponent(st.place || st.label || "송달지")}&appname=${app}`; }
 function renderList(etas) {
-  const box = $("list"); box.classList.toggle("hidden", !S.showList); if (!S.showList) return;
+  const box = $("list"); box.classList.toggle("hidden", !S.showList);
+  $("sheet").classList.toggle("listing", !!S.showList);
+  if (!S.animating) $("btn-list").textContent = S.showList ? "카드" : "목록";
+  if (!S.showList) return;
   const rem = remaining(); box.innerHTML = `<div class="head"><span>순서 (번호 = 서류 번호)</span><button class="ghost" id="btn-reset">완료 모두 취소</button></div>`;
   $("btn-reset").onclick = () => { if (confirm("오늘 완료 표시를 모두 지울까요?")) { snapshot("완료 모두 취소"); S.done = {}; S.order = [...S.plan.order]; saveDone(); render(); } };
   S.order.forEach((i) => {
@@ -335,7 +348,9 @@ async function openRecalc(useGps, ready) {
   const chips = pr.nextOrder.map((i, k) => `<span class="chip ${pr.rem[k] !== i ? "moved" : ""}">${docNumber(i)}</span>`).join("→");
   const line = (lbl, r) => r.ok ? `<tr><td>${lbl}</td><td><b>${hhmm(r.finish)}</b></td><td>${mins(r.drive)}</td><td>${mins(r.wait)}</td></tr>` : `<tr><td>${lbl}</td><td colspan="3" class="bad">기한 안에 다 못 돌아요</td></tr>`;
   const verdict = !changed ? "지금 순서가 이미 가장 좋아요." :
-    g.fixes ? "지금 순서로는 시간창을 못 지키는 곳이 있어서, 지킬 수 있게 바꿨어요." :
+    g.fixes && pr.cur.ok ? `바꾸면 <b>제시간에 갈 수 있는 곳이 ${pr.cur.missed - pr.next.missed}곳 늘어요</b>. ` + (pr.next.missed ? `그래도 ${pr.next.missed}곳은 시간을 넘겨요(오늘 중 방문). ` : "") +
+      (() => { const d = Math.round((pr.next.finish - pr.cur.finish) / 60); return d === 0 ? "끝나는 시각은 같아요." : `끝나는 시각은 ${Math.abs(d)}분 ${d > 0 ? "늦어져요" : "빨라져요"}.`; })() :
+    g.fixes ? "지금 순서로는 퇴근 기한 안에 다 못 돌아서, 돌 수 있게 바꿨어요." + (pr.next.missed ? ` ${pr.next.missed}곳은 시간을 넘겨요(오늘 중 방문).` : "") :
     `바꾸면 <b>${g.finish > 0 ? Math.round(g.finish / 60) + "분 빨리 끝나고" : "끝나는 시각은 같고"}</b>, 운전이 <b>${Math.round(g.drive / 60)}분</b> ${g.drive >= 0 ? "줄어요" : "늘어요"}.`;
   box.innerHTML = `<div class="rc-card">
     <div class="rc-title">남은 ${pr.rem.length}건 순서 다시 계산</div>
@@ -507,7 +522,27 @@ async function boot() {
   $("btn-list").onclick = () => { if (S.animating) return stopAnimation(); S.showList = !S.showList; if (S.showList) setCollapsed(false); render(); };
   $("btn-reload").onclick = () => location.reload();
   $("btn-send").onclick = () => { closeMenu(); sendResults(); };
-  $("handle").onclick = () => { setCollapsed(!S.collapsed); render(); };
+  /* 회색 바: 누르면 접기/펼치기, 끌면 단계 이동 — 위로 끌면 접힘 → 카드 → 목록, 아래로 끌면 목록 → 카드 → 접힘 */
+  const sheetStep = (dir) => {
+    if (dir < 0) { if (S.collapsed) setCollapsed(false); else if (!S.showList && !S.animating) S.showList = true; }
+    else { if (S.showList) S.showList = false; else if (!S.collapsed) setCollapsed(true); }
+    render(); $("sheet").scrollTop = 0;
+  };
+  const handle = $("handle"), sheet = $("sheet"); let drag = null;
+  handle.addEventListener("pointerdown", (e) => { drag = { y: e.clientY, dy: 0 }; try { handle.setPointerCapture(e.pointerId); } catch (err) {} });
+  handle.addEventListener("pointermove", (e) => {
+    if (!drag) return; drag.dy = e.clientY - drag.y;
+    sheet.style.transition = "none"; sheet.style.transform = `translateY(${Math.max(-24, Math.min(160, drag.dy))}px)`;   // 손가락을 따라 살짝 움직임
+  });
+  const endDrag = (e, cancelled) => {
+    if (!drag) return; const dy = drag.dy; drag = null;
+    sheet.style.transition = "transform .18s"; sheet.style.transform = "";
+    if (cancelled) return;
+    if (Math.abs(dy) < 10) { setCollapsed(!S.collapsed); render(); }   // 거의 안 움직였으면 '누름'
+    else if (Math.abs(dy) >= 28) sheetStep(dy < 0 ? -1 : 1);
+  };
+  handle.addEventListener("pointerup", (e) => endDrag(e, false));
+  handle.addEventListener("pointercancel", (e) => endDrag(e, true));
   try { if (localStorage.getItem("songdal_collapsed") === "1") setCollapsed(true); } catch (e) {}
   try { if (S.plan.sync && !LOCAL && localStorage.getItem(syncKey())) setTimeout(pushSync, 1500); } catch (e) {}
   if (S.offline) toast("인터넷이 안 돼서 이 아이폰에 저장된 방문표를 보여줘요 (지도는 안 나올 수 있어요)", null, null, 8000);
