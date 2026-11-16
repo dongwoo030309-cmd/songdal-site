@@ -11,7 +11,8 @@ button.icon { padding: 8px 10px; font-size: 13px; background: rgba(255,255,255,.
 .app { display: flex; flex-direction: column; height: 100%; }
 .bar { background: var(--g); color: #fff; padding: calc(env(safe-area-inset-top) + 8px) 14px 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .bar .title { font-weight: 700; font-size: 16px; } .bar .sub { font-size: 12px; opacity: .85; }
-.bar-btns { display: flex; gap: 6px; }
+.bar-btns { display: flex; gap: 6px; flex: none; } .bar-btns button { white-space: nowrap; }   /* 좁은 화면에서 '목록'이 두 줄로 꺾이지 않게 */
+.bar > div:first-child { min-width: 0; }
 .map { flex: 1; min-height: 40vh; }
 .note { background: #fff6e8; color: var(--warn); font-size: 12px; padding: 6px 12px; }
 .sheet { background: #fff; border-top-left-radius: 16px; border-top-right-radius: 16px; box-shadow: 0 -4px 16px rgba(0,0,0,.12); padding: 6px 14px calc(env(safe-area-inset-bottom) + 12px); max-height: 55vh; overflow: auto; }
