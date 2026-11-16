@@ -132,3 +132,26 @@ body.toast-undo .undo-line { display: none; }
 .next .act .actions .wide { grid-column: auto; } .next .act .actions { grid-template-columns: 1fr 1.25fr; align-items: stretch; }
 .next .act .actions a button { height: 100%; padding: 12px 6px; background: #fff; color: var(--g); border: 2px solid var(--g); } .next .act .actions .big { padding: 14px 6px; }
 .sheet { max-height: 60vh; }
+
+/* ---- 11-17 추가: 지도 버튼·카드 위 도구·재방문 ---- */
+.map-wrap { position: relative; flex: 1; min-height: 40vh; display: flex; } .map-wrap .map { flex: 1; min-height: 0; }
+.app.listing .map-wrap { min-height: 22vh; flex: 0 1 22vh; }
+.map-btns { position: absolute; right: 10px; bottom: 26px; z-index: 1200; display: flex; flex-direction: column; gap: 8px; }
+.map-btns button { padding: 10px 12px; font-size: 13px; background: #fff; color: var(--g); border: 1px solid #cfd8d3; box-shadow: 0 2px 8px rgba(0,0,0,.25); min-height: 44px; }
+.next .kicker { align-items: center; min-height: 34px; } .next .kicker .tools { display: flex; gap: 6px; }
+.next .kicker .tool { padding: 8px 10px; font-size: 13px; background: #f1f1ec; color: var(--ink); border-radius: 999px; white-space: nowrap; font-weight: 600; }
+.next .again-note { margin: 2px 0 4px; padding: 5px 9px; background: #fde3e0; color: #8a2a23; border-radius: 8px; font-size: 13px; font-weight: 600; }
+.list .item .two { display: flex; flex-direction: column; gap: 6px; flex: none; } .list .item .two button { min-height: 40px; padding: 9px 10px; }
+.list .item button.again { background: #a4312a; color: #fff; }
+.list .item small .from { color: #5b4bb5; }
+
+/* ---- 11-17 사용성 건의 반영 ---- */
+.sheet.collapsed .door .dn { display: inline; } .sheet.collapsed .door .use + .nm { display: none; }   /* 접어도 '공동현관' 같은 용도는 남김 */
+.next .door .use { color: #a4312a; font-weight: 700; }
+.menu button.danger { color: #a4312a; border-top: 1px solid var(--line); border-radius: 0; margin-top: 4px; }
+.list .head input { flex: 1; font: inherit; font-size: 16px; padding: 10px 12px; border: 1px solid #cfcfc8; border-radius: 10px; min-width: 0; -webkit-appearance: none; }
+.done-sum { display: flex; justify-content: center; gap: 10px; margin-top: 10px; } .done-sum span { flex: 1; max-width: 110px; padding: 8px 4px; border-radius: 12px; background: #f1f1ec; font-size: 13px; font-weight: 600; color: var(--mute); }
+.done-sum b { display: block; font-size: 24px; color: var(--ink); } .done-sum .ok b { color: #2f7d4f; } .done-sum .absent b, .done-sum .addr b { color: #a4312a; }
+button.again-btn { display: block; width: 100%; margin-top: 4px; padding: 14px; background: #a4312a; font-size: 16px; }
+/* 목록을 열었을 때 지도가 왼쪽 일부만 차지하던 문제: 지도는 감싼 틀(map-wrap)을 가로로 꽉 채움 */
+.app.listing .map-wrap .map { flex: 1 1 auto; min-height: 0; width: 100%; }
