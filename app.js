@@ -222,7 +222,8 @@ function render() {
   const plan = S.plan, rem = remaining(), total = S.order.length, doneCount = total - rem.length;
   $("bar-title").textContent = `${plan.date.slice(5).replace("-", "/")} 방문표`;
   const gen = plan.generated ? plan.generated.slice(5, 16).replace("T", " ").replace("-", "/") : "";
-  $("bar-sub").textContent = `처리 ${doneCount}/${total}${doneCount ? ` (${countsText(resultCounts())})` : ""} · 계획 ${hhmm(plan.depart)} ${plan.start.name} 출발 (${gen} 계산)${S.offline ? " · 오프라인" : ""}`;
+  $("bar-sub").textContent = `처리 ${doneCount}/${total}${doneCount ? ` · ${countsText(resultCounts())}` : ""}${S.offline ? " · 오프라인" : ""}`;
+  if ($("menu-info")) $("menu-info").textContent = `계획: ${hhmm(plan.depart)} ${plan.start.name} 출발 · ${gen} 계산`;
   const base = liveBase(false);
   const sim = simulate(rem, base.origin, base.t);
   const etas = {}; (sim.rows || []).forEach((r) => (etas[r.i] = r));
@@ -234,19 +235,22 @@ function render() {
     const i = S.selected && rem.includes(S.selected) ? S.selected : rem[0]; const st = stopOf(i); const e = etas[i];
     const isNext = i === rem[0];
     next.innerHTML = `
+      ${isNext ? "" : `<div class="picked"><span>다음 차례가 아닌 곳을 보고 있어요</span><button id="btn-back">다음 방문(서류 ${docNumber(rem[0])}번)으로</button></div>`}
       <div class="kicker"><span>${isNext ? "다음 방문" : "선택한 방문지"}</span><span>처리 ${doneCount}/${total}${S.collapsed ? ` · <span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)}</span>` : ""}</span></div>
       <div class="docrow"><div class="docno"><small>서류</small><b>${docNumber(i)}</b></div><div class="name">${esc(st.label || st.place || "(이름 없음)")}</div></div>
-      ${st.label && st.place ? `<div class="place more-info">${esc(st.place)}</div>` : ""}
-      ${st.door && st.door.length ? st.door.map((d) => `<div class="door"><span class="k">출입</span><span class="code">${esc(d.code)}</span>${d.note ? `<span class="note">${esc(d.note)}</span>` : ""}<div class="dn">${esc(d.name)}</div></div>`).join("") : ""}
-      <div class="addr more-info">${esc(st.address)}${st.memo ? " · " + esc(st.memo) : ""}${st.folder && st.folder.includes(" + ") ? `<br><b>두 폴더 문건 함께 확인</b> (${esc(st.folder)})` : ""}</div>
-      <div class="actions">
-        <a class="wide" href="${navLink(st)}"><button class="wide" style="width:100%">네이버지도 길안내</button></a>
-        <button class="wide big" id="btn-done">전달 완료</button>
-      </div>
-      <div class="actions3">
-        <button class="ghost warn" id="btn-absent">부재</button>
-        <button class="ghost warn" id="btn-addr">주소 문제</button>
-        <button class="ghost" id="btn-skip">${isNext ? "순서 미루기" : "이 건부터"}</button>
+      ${st.label && st.place ? `<div class="place">${esc(st.place)}</div>` : ""}
+      ${st.door && st.door.length ? st.door.map((d) => `<div class="door"><span class="k">출입</span><span class="code">${esc(d.code)}</span><span class="dn">${esc([d.note, d.name].filter(Boolean).join(" · "))}</span></div>`).join("") : ""}
+      <div class="addr">${esc(st.address)}${st.memo ? ` · <b class="memo">${esc(st.memo)}</b>` : ""}${st.folder && st.folder.includes(" + ") ? `<br><b>두 폴더 문건 함께 확인</b> (${esc(st.folder)})` : ""}</div>
+      <div class="act${isNext ? "" : " other"}">
+        <div class="actions">
+          <a class="wide" href="${navLink(st)}"><button class="wide" style="width:100%">네이버지도 길안내</button></a>
+          <button class="wide big" id="btn-done">${isNext ? "전달 완료" : `서류 ${docNumber(i)}번 전달 완료`}</button>
+        </div>
+        <div class="actions3">
+          <button class="ghost warn" id="btn-absent">부재</button>
+          <button class="ghost warn" id="btn-addr">주소 문제</button>
+          <button class="ghost" id="btn-skip">${isNext ? "순서 미루기" : "이 건부터"}</button>
+        </div>
       </div>
       <!-- 버튼이 항상 먼저 보이게: 시간·조건 정보는 버튼 아래 -->
       <div class="more-info">${timesHtml(planned[i], e, base)}</div>
@@ -254,12 +258,13 @@ function render() {
       ${rem.length >= 2 ? `<button class="recalc-line more-info" id="btn-recalc">🔄 남은 ${rem.length}건 순서 다시 계산</button>` : ""}
       ${(S.history || []).length ? `<button class="undo-line" id="btn-undo">↶ 되돌리기 · ${esc(S.history[S.history.length - 1].label)}</button>` : ""}`;
     if ($("btn-undo")) $("btn-undo").onclick = undo;
+    if ($("btn-back")) $("btn-back").onclick = () => { S.selected = null; render(); $("sheet").scrollTop = 0; followNext(); };
     if ($("btn-recalc")) $("btn-recalc").onclick = () => openRecalc(true);
     const finish = (kind) => {
       const what = `서류 ${docNumber(i)}번 ${RESULTS[kind]}`;
       snapshot(what);
       S.done[i] = nowSec(); S.res = S.res || {}; if (kind === "ok") delete S.res[i]; else S.res[i] = kind;
-      S.selected = null; saveDone(); render();
+      S.selected = null; saveDone(); render(); $("sheet").scrollTop = 0; followNext();
       toast(what, "되돌리기", undo, 8000);
       // 더 빠른 순서가 있으면 알려만 주고, 바꾸는 건 동우님이 정함
       setTimeout(() => { if (remaining().length < 2) return; const pr = proposeRemaining(false); const gain = gainOf(pr);
@@ -277,20 +282,29 @@ function timesHtml(pl, e, base) {
   let liveLine = "";
   if (e) {
     const d = pl ? Math.round((e.arrive - pl.arrive) / 60) : 0;
-    const dTxt = !pl || base.planned ? "" : d === 0 ? " (계획과 같음)" : ` (${d > 0 ? "+" : ""}${d}분)`;
-    liveLine = base.planned ? "" : `<div><span class="tl live">지금 기준 예상</span><b>${hhmm(e.arrive)}</b> 도착${e.wait > 60 ? ` · 대기 ${mins(e.wait)}` : ""}${dTxt}</div>`;
-  } else liveLine = `<div><span class="tl live">지금 기준 예상</span>시간 계산 불가</div>`;
+    const dTxt = !pl || base.planned ? "" : d === 0 ? " · 계획과 같아요" : ` · 계획보다 ${Math.abs(d)}분 ${d > 0 ? "늦어요" : "빨라요"}`;
+    const waitTxt = e.wait > 60 ? `<div class="wait">${hhmm(e.begin)}부터 송달할 수 있어서 ${mins(e.wait)} 기다려요</div>` : "";
+    liveLine = base.planned ? "" : `<div><span class="tl live">지금 출발하면</span><b>${hhmm(e.arrive)}</b> 도착${dTxt}</div>${waitTxt}`;
+  } else liveLine = `<div><span class="tl live">지금 출발하면</span>시간 계산 불가</div>`;
   return `<div class="times">${planLine}${liveLine}<div class="basis">기준: ${esc(base.label)}</div></div>`;
 }
 function navLink(st) { const app = encodeURIComponent(LOCAL ? "songdal" : location.origin + location.pathname); return `nmap://navigation?dlat=${st.lat}&dlng=${st.lng}&dname=${encodeURIComponent(st.place || st.label || "송달지")}&appname=${app}`; }
 function renderList(etas) {
   const box = $("list"); box.classList.toggle("hidden", !S.showList);
-  $("sheet").classList.toggle("listing", !!S.showList);
+  $("sheet").classList.toggle("listing", !!S.showList); $("app").classList.toggle("listing", !!S.showList);
   if (!S.animating) $("btn-list").textContent = S.showList ? "카드" : "목록";
   if (!S.showList) return;
-  const rem = remaining(); box.innerHTML = `<div class="head"><span>순서 (번호 = 서류 번호)</span><button class="ghost" id="btn-reset">기록 모두 지우기</button></div><div class="sum">${esc(countsText(resultCounts()))} · 남음 ${rem.length}</div>`;
-  $("btn-reset").onclick = () => { if (confirm("오늘 기록(전달·부재·주소 문제)을 모두 지우고 순서도 처음대로 돌릴까요?")) { snapshot("기록 모두 지우기"); S.done = {}; S.res = {}; S.order = [...S.plan.order]; saveDone(); render(); } };
-  S.order.forEach((i) => {
+  const rem = remaining(), cnt = resultCounts(), nAgain = cnt.absent + cnt.addr;
+  if (S.listFilter === "again" && !nAgain) S.listFilter = "all";
+  const f = S.listFilter || "all";
+  const chip = (key, label) => `<button class="fchip${f === key ? " on" : ""}" data-f="${key}">${label}</button>`;
+  box.innerHTML = `<div class="head"><span>번호 = 서류 번호</span><button class="ghost" id="btn-reset">기록 모두 지우기</button></div>
+    <div class="filters">${chip("all", `전체 ${S.order.length}`)}${chip("left", `남은 곳 ${rem.length}`)}${chip("again", `다시 갈 곳 ${nAgain}`)}</div>
+    <div class="sum">${esc(countsText(cnt))} · 남음 ${rem.length}</div>`;
+  box.querySelectorAll(".fchip").forEach((b) => (b.onclick = () => { S.listFilter = b.dataset.f; render(); $("sheet").scrollTop = 0; }));
+  const shown = S.order.filter((i) => f === "all" || (f === "left" ? !S.done[i] : resultOf(i) && resultOf(i) !== "ok"));
+  if (!shown.length) box.insertAdjacentHTML("beforeend", `<div class="hint" style="padding:14px 0">${f === "left" ? "남은 곳이 없어요." : "해당하는 곳이 없어요."}</div>`);
+  shown.forEach((i) => {
     const st = stopOf(i); const done = !!S.done[i]; const e = etas[i]; const cur = !done && rem[0] === i;
     const rk = resultOf(i);
     const div = document.createElement("div"); div.className = "item" + (done ? " done" : "") + (rk && rk !== "ok" ? " again" : "") + (cur ? " cur" : "");
@@ -304,8 +318,10 @@ function renderList(etas) {
 let toastTimer;
 function toast(msg, actionLabel, actionFn, ms) {
   const n = $("note"); n.innerHTML = ""; const span = document.createElement("span"); span.textContent = msg; n.appendChild(span);
-  if (actionLabel) { const b = document.createElement("button"); b.className = "note-btn"; b.textContent = actionLabel; b.onclick = () => { n.classList.add("hidden"); actionFn(); }; n.appendChild(b); }
-  n.classList.remove("hidden"); clearTimeout(toastTimer); toastTimer = setTimeout(() => n.classList.add("hidden"), ms || 4000);
+  const hide = () => { n.classList.add("hidden"); document.body.classList.remove("toast-undo"); };
+  if (actionLabel) { const b = document.createElement("button"); b.className = "note-btn"; b.textContent = actionLabel; b.onclick = () => { hide(); actionFn(); }; n.appendChild(b); }
+  document.body.classList.toggle("toast-undo", actionFn === undo);   // 같은 되돌리기가 카드에도 있어서 그 줄은 잠깐 숨김
+  n.classList.remove("hidden"); clearTimeout(toastTimer); toastTimer = setTimeout(hide, ms || 4000);
 }
 
 /* ---------- 지도 ---------- */
@@ -338,6 +354,15 @@ function drawRoute() {
   });
   m.marker({ lat: S.plan.start.lat, lng: S.plan.start.lng, label: "출발", color: "#333", size: 34, z: 95 });
   if (S.plan.end_mode === "custom") m.marker({ lat: S.plan.end.lat, lng: S.plan.end.lng, label: "종료", color: "#555", size: 34, z: 95 });
+}
+/* 지도를 '지금 있는 곳 → 다음 방문지' 구간에 맞춤 (기록할 때마다 다음 곳이 지도에 보이게) */
+function followNext() {
+  const nx = remaining()[0]; if (!nx || !S.map || S.animating) return;
+  const { coords } = legCoords(currentPos(), nx); const pts = (coords.length ? coords : [pt(nx)]).slice();
+  // 가까운 구간이면 지도가 지나치게 확대되므로, 주변 250m쯤은 함께 보이게 범위를 넓힘
+  const la = pts.map((q) => q[0]), lo = pts.map((q) => q[1]), cy = (Math.min(...la) + Math.max(...la)) / 2, cx = (Math.min(...lo) + Math.max(...lo)) / 2, pad = 0.0025;
+  pts.push([cy - pad, cx - pad], [cy + pad, cx + pad]);
+  S.map.fit(pts);
 }
 function fitAll() { const pts = remaining().map(pt); if (!pts.length) pts.push(pt(0)); S.map.fit(pts); }
 function fitLeg(i) { const { coords } = legCoords(prevOf(i), i); S.map.fit(coords.length ? coords : [pt(i)]); }
@@ -553,7 +578,7 @@ async function boot() {
   $("gate").classList.add("hidden"); $("app").classList.remove("hidden");
   loadDone();
   if (!S.map) S.map = await SongdalMap.create($("map"), { clientId: S.plan.naver_client_id, onFallback: () => { S.fallbackNote = "네이버 지도 대신 OpenStreetMap 으로 표시 중"; if (S.plan) toast(S.fallbackNote); } });
-  render(); fitAll(); setTimeout(() => S.map.resize(), 300);
+  render(); if (Object.keys(S.done).length) followNext(); else fitAll(); setTimeout(() => S.map.resize(), 300);
   if (S.fallbackNote) toast(S.fallbackNote);
   if (S.carried) {
     const c = S.carried; S.carried = null;
