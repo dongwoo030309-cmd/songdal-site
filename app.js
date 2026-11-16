@@ -68,12 +68,14 @@ const resultOf = (i) => (S.done[i] ? ((S.res || {})[i] && RESULTS[S.res[i]] ? S.
 function resultCounts() { const c = { ok: 0, absent: 0, addr: 0 }; S.order.forEach((i) => { const r = resultOf(i); if (r) c[r]++; }); return c; }
 function countsText(c) { return [`전달 ${c.ok}`, c.absent ? `부재 ${c.absent}` : "", c.addr ? `주소 문제 ${c.addr}` : ""].filter(Boolean).join(" · "); }
 const storeKey = () => "songdal_done_" + (S.plan ? S.plan.date : "");
-/* 지난 날짜 기록 정리: 최근 3일치(오늘 포함)만 남기고 지움. Safari 저장 한도(약 5MB)를 넘지 않게. */
+/* 지난 날짜 기록 정리: 최근 3일치(오늘 포함)와 아직 전송 안 된 날짜만 남기고 지움. Safari 저장 한도(약 5MB)를 넘지 않게. */
 function pruneOldDays() {
   try {
     const dates = new Set();
     for (let k = 0; k < localStorage.length; k++) { const m = /^songdal_(?:done|sync)_(\d{4}-\d{2}-\d{2})/.exec(localStorage.key(k)); if (m) dates.add(m[1]); }
     const keep = new Set([...dates].sort().slice(-3).concat(S.plan ? [S.plan.date] : []));
+    // 맥으로 아직 전송되지 않은 날짜(미저장 표시가 남은 날)는 며칠이 지나도 지우지 않음
+    for (let k = 0; k < localStorage.length; k++) { const m = /^songdal_sync_(\d{4}-\d{2}-\d{2})$/.exec(localStorage.key(k)); if (m) keep.add(m[1]); }
     const drop = [];
     for (let k = 0; k < localStorage.length; k++) { const key = localStorage.key(k), m = /^songdal_(?:done|sync)_(\d{4}-\d{2}-\d{2})/.exec(key); if (m && !keep.has(m[1])) drop.push(key); }
     drop.forEach((key) => localStorage.removeItem(key));
@@ -220,7 +222,7 @@ function render() {
   const plan = S.plan, rem = remaining(), total = S.order.length, doneCount = total - rem.length;
   $("bar-title").textContent = `${plan.date.slice(5).replace("-", "/")} 방문표`;
   const gen = plan.generated ? plan.generated.slice(5, 16).replace("T", " ").replace("-", "/") : "";
-  $("bar-sub").textContent = `${doneCount}/${total} 완료 · 계획 ${hhmm(plan.depart)} ${plan.start.name} 출발 (${gen} 계산)${S.offline ? " · 오프라인" : ""}`;
+  $("bar-sub").textContent = `처리 ${doneCount}/${total}${doneCount ? ` (${countsText(resultCounts())})` : ""} · 계획 ${hhmm(plan.depart)} ${plan.start.name} 출발 (${gen} 계산)${S.offline ? " · 오프라인" : ""}`;
   const base = liveBase(false);
   const sim = simulate(rem, base.origin, base.t);
   const etas = {}; (sim.rows || []).forEach((r) => (etas[r.i] = r));
@@ -232,7 +234,7 @@ function render() {
     const i = S.selected && rem.includes(S.selected) ? S.selected : rem[0]; const st = stopOf(i); const e = etas[i];
     const isNext = i === rem[0];
     next.innerHTML = `
-      <div class="kicker"><span>${isNext ? "다음 방문" : "선택한 방문지"}</span><span>${doneCount}/${total} 완료${S.collapsed ? ` · <span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)}</span>` : ""}</span></div>
+      <div class="kicker"><span>${isNext ? "다음 방문" : "선택한 방문지"}</span><span>처리 ${doneCount}/${total}${S.collapsed ? ` · <span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)}</span>` : ""}</span></div>
       <div class="docrow"><div class="docno"><small>서류</small><b>${docNumber(i)}</b></div><div class="name">${esc(st.label || st.place || "(이름 없음)")}</div></div>
       ${st.label && st.place ? `<div class="place more-info">${esc(st.place)}</div>` : ""}
       ${st.door && st.door.length ? st.door.map((d) => `<div class="door"><span class="k">출입</span><span class="code">${esc(d.code)}</span>${d.note ? `<span class="note">${esc(d.note)}</span>` : ""}<div class="dn">${esc(d.name)}</div></div>`).join("") : ""}
@@ -244,7 +246,7 @@ function render() {
       <div class="actions3">
         <button class="ghost warn" id="btn-absent">부재</button>
         <button class="ghost warn" id="btn-addr">주소 문제</button>
-        <button class="ghost" id="btn-skip">${isNext ? "한 곳 뒤로" : "이 건부터"}</button>
+        <button class="ghost" id="btn-skip">${isNext ? "순서 미루기" : "이 건부터"}</button>
       </div>
       <!-- 버튼이 항상 먼저 보이게: 시간·조건 정보는 버튼 아래 -->
       <div class="more-info">${timesHtml(planned[i], e, base)}</div>
@@ -428,10 +430,10 @@ function setCollapsed(on) {
 
 /* ---------- 오늘 결과 맥으로 보내기 (암호화한 글) ---------- */
 function bytesToB64(u8) { let bin = ""; for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(bin); }
-async function resultText() {
+async function resultText(other) {
   const keyB64u = localStorage.getItem("songdal_key");
   if (!keyB64u) throw new Error("열쇠가 없어요.");
-  const payload = { v: 2, date: S.plan.date, generated: S.plan.generated, done: S.done, res: S.res || {}, order: S.order, sig: planSig(), keys: planKeys() };
+  const payload = other || { v: 2, date: S.plan.date, generated: S.plan.generated, done: S.done, res: S.res || {}, order: S.order, sig: planSig(), keys: planKeys() };
   const key = await crypto.subtle.importKey("raw", b64uToBytes(keyB64u), "AES-GCM", false, ["encrypt"]);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(payload))));
@@ -491,6 +493,33 @@ async function pushSync() {
     SYNC.busy = false;
     if (SYNC.again) { SYNC.again = false; setTimeout(pushSync, 2000); }
   }
+}
+/* 지난 날짜의 미전송 기록: 그날 인터넷이 안 돼서 아이폰에만 남은 결과를, 다음에 방문표를 열 때 맥(비공개 저장소)으로 보냄.
+   그날 방문표는 이미 없으므로 저장해 둔 기록과 계산본 정보(_plan)만으로 보냄. 보내진 날짜는 그 뒤 정리 대상이 됨. */
+function oldDayPayload(d) {
+  const read = (suffix) => { try { return JSON.parse(localStorage.getItem("songdal_done_" + d + suffix) || "null"); } catch (e) { return null; } };
+  const meta = read("_plan"), done = read("");
+  if (!meta || !meta.sig || !done) return null;   // 예전 방식 기록은 어느 계산본인지 알 수 없어 보내지 않고 보관만 함
+  return { v: 2, date: d, generated: meta.sig.split("|")[0], done, res: read("_res") || {}, order: read("_order") || [], sig: meta.sig, keys: meta.keys || {} };
+}
+async function pushOldDays() {
+  if (!S.plan || !S.plan.sync || LOCAL || !navigator.onLine) return 0;
+  const days = [];
+  for (let k = 0; k < localStorage.length; k++) { const m = /^songdal_sync_(\d{4}-\d{2}-\d{2})$/.exec(localStorage.key(k)); if (m && m[1] !== S.plan.date) days.push(m[1]); }
+  let sent = 0;
+  for (const d of days.sort()) {
+    try {
+      const payload = oldDayPayload(d); if (!payload) continue;
+      const path = `${S.plan.sync.dir || "results"}/${d}.txt`;
+      const content = bytesToB64(new TextEncoder().encode(await resultText(payload)));
+      const cur = await gh("GET", path); const sha = cur.status === 200 ? (await cur.json()).sha : null;
+      if (cur.status === 401 || cur.status === 403) break;
+      const r = await gh("PUT", path, { message: `결과 ${d} (늦게 보냄)`, content, ...(sha ? { sha } : {}) });
+      if (!r.ok) break;
+      localStorage.removeItem("songdal_sync_" + d); sent++;
+    } catch (e) { break; }   // 인터넷·토큰 문제면 다음에 다시
+  }
+  return sent;
 }
 window.addEventListener("online", () => { try { if (S.plan && localStorage.getItem(syncKey())) pushSync(); } catch (e) {} });
 document.addEventListener("visibilitychange", () => { try { if (!document.hidden && S.plan && localStorage.getItem(syncKey())) pushSync(); } catch (e) {} });
@@ -568,6 +597,7 @@ async function boot() {
   handle.addEventListener("pointercancel", (e) => endDrag(e, true));
   try { if (localStorage.getItem("songdal_collapsed") === "1") setCollapsed(true); } catch (e) {}
   try { if (S.plan.sync && !LOCAL && localStorage.getItem(syncKey())) setTimeout(pushSync, 1500); } catch (e) {}
+  setTimeout(() => { pushOldDays().then((n) => { if (n) toast(`전송되지 않았던 지난 ${n}일치 기록을 맥으로 보냈어요.`, null, null, 7000); }).catch(() => {}); }, 4000);
   if (S.offline) toast("인터넷이 안 돼서 이 아이폰에 저장된 방문표를 보여줘요 (지도는 안 나올 수 있어요)", null, null, 8000);
 }
 boot();
