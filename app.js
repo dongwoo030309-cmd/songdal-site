@@ -90,7 +90,7 @@ const keyOf = (st) => st.k || (st.id != null ? stopKey(st.id) : "i" + st.i);
 /* 이 방문표(계산본)의 지문: 계산 시각 + 고른 안 + 방문 순서(곳 기준) + 서류 번호. 맥 history.plan_sig 와 같은 값이어야 함 */
 function planSig() {
   const o = S.plan.order, doc = S.plan.doc || {};
-  return [S.plan.generated || "", S.plan.chosen || "", o.map((i) => keyOf(stopOf(i))).join(","), o.map((i, n) => +doc[i] || n + 1).join(",")].join("|");
+  return [S.plan.generated || "", S.plan.chosen || "", o.map((i) => keyOf(stopOf(i))).join(","), o.map((i, n) => +doc[i] || n + 1).join(","), S.plan.pid || ""].join("|");
 }
 function sameKeys(a, b) { a = a || {}; const ka = Object.keys(a), kb = Object.keys(b); return ka.length === kb.length && kb.every((i) => a[i] === b[i]); }
 function planKeys() { const m = {}; S.plan.stops.forEach((st) => { m[st.i] = keyOf(st); }); return m; }
@@ -548,7 +548,10 @@ async function boot() {
     else { if (S.showList) S.showList = false; else if (!S.collapsed) setCollapsed(true); }
     render(); $("sheet").scrollTop = 0;
   };
+  // 누름: 접기/펼치기. 목록을 보던 중이면 목록을 닫고 접음(안 그러면 카드도 목록도 안 보임)
+  const tapHandle = () => { if (S.showList) S.showList = false; setCollapsed(!S.collapsed); render(); };
   const handle = $("handle"), sheet = $("sheet"); let drag = null;
+  handle.addEventListener("click", (e) => { if (e.detail === 0) tapHandle(); });   // 키보드(Enter·Space)로 누른 경우. 손가락 누름은 아래 pointerup 에서 처리
   handle.addEventListener("pointerdown", (e) => { drag = { y: e.clientY, dy: 0 }; try { handle.setPointerCapture(e.pointerId); } catch (err) {} });
   handle.addEventListener("pointermove", (e) => {
     if (!drag) return; drag.dy = e.clientY - drag.y;
@@ -558,7 +561,7 @@ async function boot() {
     if (!drag) return; const dy = drag.dy; drag = null;
     sheet.style.transition = "transform .18s"; sheet.style.transform = "";
     if (cancelled) return;
-    if (Math.abs(dy) < 10) { setCollapsed(!S.collapsed); render(); }   // 거의 안 움직였으면 '누름'
+    if (Math.abs(dy) < 10) tapHandle();   // 거의 안 움직였으면 '누름'
     else if (Math.abs(dy) >= 28) sheetStep(dy < 0 ? -1 : 1);
   };
   handle.addEventListener("pointerup", (e) => endDrag(e, false));
