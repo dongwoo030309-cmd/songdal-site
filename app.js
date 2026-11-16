@@ -62,6 +62,11 @@ $("gate-save").onclick = () => {
   localStorage.setItem("songdal_key", m[1]); $("gate-token").value = ""; $("gate").classList.add("hidden"); boot();
 };
 
+/* 방문 결과: 마침을 누를 때 고름. 기록에는 전달 완료가 아닌 것만 남김(S.res). 맥 history.RESULTS 와 같은 이름 */
+const RESULTS = { ok: "전달 완료", absent: "부재", addr: "주소 문제" };
+const resultOf = (i) => (S.done[i] ? ((S.res || {})[i] && RESULTS[S.res[i]] ? S.res[i] : "ok") : null);
+function resultCounts() { const c = { ok: 0, absent: 0, addr: 0 }; S.order.forEach((i) => { const r = resultOf(i); if (r) c[r]++; }); return c; }
+function countsText(c) { return [`전달 ${c.ok}`, c.absent ? `부재 ${c.absent}` : "", c.addr ? `주소 문제 ${c.addr}` : ""].filter(Boolean).join(" · "); }
 const storeKey = () => "songdal_done_" + (S.plan ? S.plan.date : "");
 /* 지난 날짜 기록 정리: 최근 3일치(오늘 포함)만 남기고 지움. Safari 저장 한도(약 5MB)를 넘지 않게. */
 function pruneOldDays() {
@@ -94,6 +99,7 @@ function loadDone() {
   const read = (suffix, dflt) => { try { const v = JSON.parse(localStorage.getItem(storeKey() + suffix) || "null"); return v == null ? dflt : v; } catch (e) { return dflt; } };
   let done = read("", {}), order = read("_order", null), hist = read("_hist", []);
   const meta = read("_plan", null), valid = new Set(S.plan.order);
+  let res = read("_res", {}); if (!res || typeof res !== "object") res = {};
   const samePerm = (o) => Array.isArray(o) && o.length === valid.size && new Set(o).size === o.length && o.every((i) => valid.has(i));
   S.carried = null;
   if (meta && (meta.sig !== planSig() || !sameKeys(meta.keys, planKeys()))) {
@@ -101,30 +107,33 @@ function loadDone() {
     // 같은 날짜에 방문표가 다시 올라옴: 마침 기록을 '곳' 기준으로 새 방문표에 옮기고, 순서는 새 방문표대로
     const byKey = {}; S.plan.stops.forEach((st) => { if (valid.has(st.i)) byKey[keyOf(st)] = st.i; });
     const moved = {}; let kept = 0, lost = 0;
-    Object.keys(done).forEach((i) => { if (!done[i]) return; const ni = byKey[(meta.keys || {})[i]]; if (ni != null) { moved[ni] = done[i]; kept++; } else lost++; });
-    done = moved; order = null; hist = []; S.carried = { kept, lost };
+    const movedRes = {};
+    Object.keys(done).forEach((i) => { if (!done[i]) return; const ni = byKey[(meta.keys || {})[i]]; if (ni != null) { moved[ni] = done[i]; if (res[i]) movedRes[ni] = res[i]; kept++; } else lost++; });
+    done = moved; res = movedRes; order = null; hist = []; S.carried = { kept, lost };
   } else if (!meta && order && (!samePerm(order) || S.samePlanText === false)) {
     // 예전 방식 기록(곳 정보 없음)인데 방문표가 다시 올라왔거나 달라짐: 어느 곳의 마침인지 알 수 없어 옮기지 않음
     // (곳 수가 같아도 구성이 다를 수 있어서, 받은 방문표가 지난번과 글자까지 같을 때만 그대로 둠)
     const had = Object.keys(done).filter((i) => done[i]).length;
-    done = {}; order = null; hist = []; if (had) S.carried = { kept: 0, lost: had, unknown: true };
+    done = {}; res = {}; order = null; hist = []; if (had) S.carried = { kept: 0, lost: had, unknown: true };
   }
   if (!samePerm(order)) { order = [...S.plan.order]; hist = []; }
   Object.keys(done).forEach((i) => { if (!valid.has(+i)) delete done[i]; });
-  S.done = done; S.order = order; S.history = Array.isArray(hist) ? hist : [];
+  Object.keys(res).forEach((i) => { if (!done[i] || !RESULTS[res[i]]) delete res[i]; });
+  S.done = done; S.res = res; S.order = order; S.history = Array.isArray(hist) ? hist : [];
   if (S.carried || !meta) { try { saveDone(S.carried ? undefined : "quiet"); } catch (e) {} }
 }
 function saveDone(quiet) {
+  localStorage.setItem(storeKey() + "_res", JSON.stringify(S.res || {}));
   localStorage.setItem(storeKey(), JSON.stringify(S.done)); localStorage.setItem(storeKey() + "_order", JSON.stringify(S.order));
   localStorage.setItem(storeKey() + "_hist", JSON.stringify(S.history || []));
   localStorage.setItem(storeKey() + "_plan", JSON.stringify({ sig: planSig(), keys: planKeys() }));
   if (quiet !== "quiet") scheduleSync();
 }
 /* 바꾸기 직전 상태를 남겨 두면 '되돌리기'로 그대로 돌아감 (마침·미루기·순서 바꾸기·취소 모두) */
-function snapshot(label) { S.history = S.history || []; S.history.push({ done: { ...S.done }, order: [...S.order], label }); if (S.history.length > 50) S.history.shift(); }
+function snapshot(label) { S.history = S.history || []; S.history.push({ done: { ...S.done }, res: { ...(S.res || {}) }, order: [...S.order], label }); if (S.history.length > 50) S.history.shift(); }
 function undo() {
   const h = (S.history || []).pop(); if (!h) return;
-  S.done = h.done; S.order = h.order; S.selected = null; saveDone(); render(); toast("되돌렸어요: " + h.label);
+  S.done = h.done; S.res = h.res || {}; S.order = h.order; S.selected = null; saveDone(); render(); toast("되돌렸어요: " + h.label);
 }
 
 /* ---------- 일정 계산 (파이썬 planner.simulate 와 같은 규칙) ---------- */
@@ -218,7 +227,7 @@ function render() {
   const planned = Object.fromEntries(plan.schedule.map((r) => [r.i, r]));
   // 다음 카드
   const next = $("next");
-  if (!rem.length) { next.innerHTML = `<div class="done-msg">오늘 방문을 모두 마쳤어요 🎉</div>${(S.history || []).length ? `<button class="undo-line" id="btn-undo">↶ 되돌리기 · ${esc(S.history[S.history.length - 1].label)}</button>` : ""}`; if ($("btn-undo")) $("btn-undo").onclick = undo; }
+  if (!rem.length) { next.innerHTML = `<div class="done-msg">오늘 방문을 모두 마쳤어요 🎉<small>${esc(countsText(resultCounts()))}${resultCounts().absent + resultCounts().addr ? " · 다시 갈 곳은 목록에서 볼 수 있어요" : ""}</small></div>${(S.history || []).length ? `<button class="undo-line" id="btn-undo">↶ 되돌리기 · ${esc(S.history[S.history.length - 1].label)}</button>` : ""}`; if ($("btn-undo")) $("btn-undo").onclick = undo; }
   else {
     const i = S.selected && rem.includes(S.selected) ? S.selected : rem[0]; const st = stopOf(i); const e = etas[i];
     const isNext = i === rem[0];
@@ -228,25 +237,35 @@ function render() {
       ${st.label && st.place ? `<div class="place more-info">${esc(st.place)}</div>` : ""}
       ${st.door && st.door.length ? st.door.map((d) => `<div class="door"><span class="k">출입</span><span class="code">${esc(d.code)}</span>${d.note ? `<span class="note">${esc(d.note)}</span>` : ""}<div class="dn">${esc(d.name)}</div></div>`).join("") : ""}
       <div class="addr more-info">${esc(st.address)}${st.memo ? " · " + esc(st.memo) : ""}${st.folder && st.folder.includes(" + ") ? `<br><b>두 폴더 문건 함께 확인</b> (${esc(st.folder)})` : ""}</div>
-      <div class="more-info">${timesHtml(planned[i], e, base)}</div>
-      <div class="meta more-info"><span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)} ${st.rule === "아무때나" ? "" : hhmm(st.window[0]) + "–" + hhmm(st.window[1])}</span>${e && e.late ? `<span class="tag late">${esc(st.rule)} 시간 지남 · 오늘 중 방문</span>` : ""}${e ? `<span class="tag">이동 ${mins(e.travel)}</span>` : ""}<span class="hint">남은 ${rem.length}건${sim.ok ? ` · 지금 기준 종료 ${hhmm(sim.finish)}` : " · 기한 안에 다 못 돌 수 있어요"}</span></div>
       <div class="actions">
         <a class="wide" href="${navLink(st)}"><button class="wide" style="width:100%">네이버지도 길안내</button></a>
-        <button id="btn-done">이 건 마침</button>
-        <button class="ghost" id="btn-skip">${isNext ? "다음으로 미루기" : "이 건부터 가기"}</button>
+        <button class="wide big" id="btn-done">전달 완료</button>
       </div>
+      <div class="actions3">
+        <button class="ghost warn" id="btn-absent">부재</button>
+        <button class="ghost warn" id="btn-addr">주소 문제</button>
+        <button class="ghost" id="btn-skip">${isNext ? "한 곳 뒤로" : "이 건부터"}</button>
+      </div>
+      <!-- 버튼이 항상 먼저 보이게: 시간·조건 정보는 버튼 아래 -->
+      <div class="more-info">${timesHtml(planned[i], e, base)}</div>
+      <div class="meta more-info"><span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)} ${st.rule === "아무때나" ? "" : hhmm(st.window[0]) + "–" + hhmm(st.window[1])}</span>${e && e.late ? `<span class="tag late">${esc(st.rule)} 시간 지남 · 오늘 중 방문</span>` : ""}${e ? `<span class="tag">이동 ${mins(e.travel)}</span>` : ""}<span class="hint">남은 ${rem.length}건${sim.ok ? ` · 지금 기준 종료 ${hhmm(sim.finish)}` : " · 기한 안에 다 못 돌 수 있어요"}</span></div>
       ${rem.length >= 2 ? `<button class="recalc-line more-info" id="btn-recalc">🔄 남은 ${rem.length}건 순서 다시 계산</button>` : ""}
       ${(S.history || []).length ? `<button class="undo-line" id="btn-undo">↶ 되돌리기 · ${esc(S.history[S.history.length - 1].label)}</button>` : ""}`;
     if ($("btn-undo")) $("btn-undo").onclick = undo;
     if ($("btn-recalc")) $("btn-recalc").onclick = () => openRecalc(true);
-    $("btn-done").onclick = () => {
-      snapshot(`서류 ${docNumber(i)}번 마침`);
-      S.done[i] = nowSec(); S.selected = null; saveDone(); render();
-      toast(`서류 ${docNumber(i)}번 마침`, "되돌리기", undo, 8000);
+    const finish = (kind) => {
+      const what = `서류 ${docNumber(i)}번 ${RESULTS[kind]}`;
+      snapshot(what);
+      S.done[i] = nowSec(); S.res = S.res || {}; if (kind === "ok") delete S.res[i]; else S.res[i] = kind;
+      S.selected = null; saveDone(); render();
+      toast(what, "되돌리기", undo, 8000);
       // 더 빠른 순서가 있으면 알려만 주고, 바꾸는 건 동우님이 정함
       setTimeout(() => { if (remaining().length < 2) return; const pr = proposeRemaining(false); const gain = gainOf(pr);
         if (gain.finish >= 300 || gain.drive >= 300) toast(gain.fixes ? "남은 순서를 바꾸면 시간을 지킬 수 있는 곳이 있어요" : `남은 순서를 바꾸면 ${gain.finish >= 60 ? Math.round(gain.finish / 60) + "분 빨리 끝나요" : "운전이 " + Math.round(gain.drive / 60) + "분 줄어요"}`, "보기", () => openRecalc(false, pr), 9000); }, 8200);
     };
+    $("btn-done").onclick = () => finish("ok");
+    $("btn-absent").onclick = () => finish("absent");
+    $("btn-addr").onclick = () => finish("addr");
     $("btn-skip").onclick = () => { snapshot(isNext ? `서류 ${docNumber(i)}번 미루기` : `서류 ${docNumber(i)}번부터 가기`); const r = remaining(); const k = r.indexOf(i); if (isNext) { if (r.length > 1) { const d = S.order.filter((x) => S.done[x]); const nr = r.slice(1, 2).concat([i], r.slice(2)); S.order = d.concat(nr); } } else { const d = S.order.filter((x) => S.done[x]); const nr = [i].concat(r.filter((x) => x !== i)); S.order = d.concat(nr); } S.selected = null; saveDone(); render(); };
   }
   renderList(etas); drawRoute();
@@ -267,14 +286,15 @@ function renderList(etas) {
   $("sheet").classList.toggle("listing", !!S.showList);
   if (!S.animating) $("btn-list").textContent = S.showList ? "카드" : "목록";
   if (!S.showList) return;
-  const rem = remaining(); box.innerHTML = `<div class="head"><span>순서 (번호 = 서류 번호)</span><button class="ghost" id="btn-reset">완료 모두 취소</button></div>`;
-  $("btn-reset").onclick = () => { if (confirm("오늘 완료 표시를 모두 지울까요?")) { snapshot("완료 모두 취소"); S.done = {}; S.order = [...S.plan.order]; saveDone(); render(); } };
+  const rem = remaining(); box.innerHTML = `<div class="head"><span>순서 (번호 = 서류 번호)</span><button class="ghost" id="btn-reset">기록 모두 지우기</button></div><div class="sum">${esc(countsText(resultCounts()))} · 남음 ${rem.length}</div>`;
+  $("btn-reset").onclick = () => { if (confirm("오늘 기록(전달·부재·주소 문제)을 모두 지우고 순서도 처음대로 돌릴까요?")) { snapshot("기록 모두 지우기"); S.done = {}; S.res = {}; S.order = [...S.plan.order]; saveDone(); render(); } };
   S.order.forEach((i) => {
     const st = stopOf(i); const done = !!S.done[i]; const e = etas[i]; const cur = !done && rem[0] === i;
-    const div = document.createElement("div"); div.className = "item" + (done ? " done" : "") + (cur ? " cur" : "");
-    div.innerHTML = `<div class="n">${docNumber(i)}</div><div class="t"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b>${st.label && st.place ? " · " + esc(st.place) : ""}<small>${esc(st.rule)}${st.door && st.door.length ? " · 출입 " + esc(st.door[0].code) : ""}${done ? ` · 마침 ${hhmm(S.done[i])}` : e ? ` · 예정 ${hhmm(e.arrive)}` : ""}</small></div>${done ? `<button class="ghost undo">취소</button>` : `<button class="ghost go">보기</button>`}`;
+    const rk = resultOf(i);
+    const div = document.createElement("div"); div.className = "item" + (done ? " done" : "") + (rk && rk !== "ok" ? " again" : "") + (cur ? " cur" : "");
+    div.innerHTML = `<div class="n">${docNumber(i)}</div><div class="t"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b>${st.label && st.place ? " · " + esc(st.place) : ""}<small>${esc(st.rule)}${st.door && st.door.length ? " · 출입 " + esc(st.door[0].code) : ""}${done ? ` · <span class="rk ${rk}">${RESULTS[rk]}</span> ${hhmm(S.done[i])}` : e ? ` · 예정 ${hhmm(e.arrive)}` : ""}</small></div>${done ? `<button class="ghost undo">기록 취소</button>` : `<button class="ghost go">보기</button>`}`;
     const b = div.querySelector("button");
-    if (done) b.onclick = () => { snapshot(`서류 ${docNumber(i)}번 마침 취소`); delete S.done[i]; saveDone(); render(); };
+    if (done) b.onclick = () => { snapshot(`서류 ${docNumber(i)}번 기록 취소`); delete S.done[i]; if (S.res) delete S.res[i]; saveDone(); render(); };
     else b.onclick = () => { S.selected = i; S.showList = false; render(); fitLeg(i); };
     box.appendChild(div);
   });
@@ -411,7 +431,7 @@ function bytesToB64(u8) { let bin = ""; for (let i = 0; i < u8.length; i += 0x80
 async function resultText() {
   const keyB64u = localStorage.getItem("songdal_key");
   if (!keyB64u) throw new Error("열쇠가 없어요.");
-  const payload = { v: 2, date: S.plan.date, generated: S.plan.generated, done: S.done, order: S.order, sig: planSig(), keys: planKeys() };
+  const payload = { v: 2, date: S.plan.date, generated: S.plan.generated, done: S.done, res: S.res || {}, order: S.order, sig: planSig(), keys: planKeys() };
   const key = await crypto.subtle.importKey("raw", b64uToBytes(keyB64u), "AES-GCM", false, ["encrypt"]);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(payload))));
