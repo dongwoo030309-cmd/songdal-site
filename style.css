@@ -101,3 +101,34 @@ button.ghost.warn { color: #a4312a; border-color: #d9a39e; }
 .list .item .rk { font-weight: 700; } .list .item .rk.ok { color: #2f7d4f; } .list .item .rk.absent, .list .item .rk.addr { color: #a4312a; }
 .list .item.again .n { background: #a4312a; } .list .item.again .t { text-decoration: none; color: var(--ink); }
 .next .actions { margin-top: 10px; } .next .times { margin-top: 10px; }
+
+/* ---- 11-17 현장 사용성 손질 ---- */
+/* 버튼(길안내·전달 완료·부재…)은 카드 내용이 길어도 항상 시트 아래에 붙어 보임 */
+.next .act { position: sticky; bottom: calc(-1 * (env(safe-area-inset-bottom) + 12px)); z-index: 3; background: #fff; margin: 6px -14px 0; padding: 8px 14px calc(env(safe-area-inset-bottom) + 12px); box-shadow: 0 -6px 10px -8px rgba(0,0,0,.25); }
+.next .act .actions { margin-top: 0; }
+/* 출입 비번: 한 줄로 */
+.next .door { margin: 6px 0 2px; padding: 6px 10px; display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; }
+.next .door .k { margin-right: 0; } .next .door .code { font-size: 21px; } .next .door .dn { margin-top: 0; }
+.next .addr .memo { color: #8a3b00; }
+/* 다음 차례가 아닌 곳을 보고 있을 때 */
+.next .picked { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 -14px 8px; padding: 8px 14px; background: #fff0d6; color: #8a3b00; font-size: 13px; font-weight: 700; border-top: 3px solid #e0902f; }
+.next .picked button { padding: 9px 10px; font-size: 13px; background: #8a3b00; white-space: nowrap; flex: none; }
+.next .act.other #btn-done { background: #8a3b00; font-size: 16px; }
+/* 되돌리기 알림이 떠 있는 동안 카드의 되돌리기 줄은 숨김(같은 버튼이 두 번 보이지 않게) */
+body.toast-undo .undo-line { display: none; }
+/* 접었을 때: 번호·이름·주소와 길안내·전달 완료만 한 줄로 */
+.sheet.collapsed .actions3, .sheet.collapsed .undo-line, .sheet.collapsed .door .dn, .sheet.collapsed .picked span { display: none; }
+.sheet.collapsed .actions .wide { grid-column: auto; } .sheet.collapsed .actions .big { padding: 12px 6px; font-size: 16px; } .sheet.collapsed .actions button { padding: 12px 6px; }
+.sheet.collapsed .next .act { box-shadow: none; padding-top: 4px; }
+/* 메뉴 아래 참고 정보 */
+.menu-info { font-size: 12px; color: var(--mute); padding: 8px 14px 6px; border-top: 1px solid var(--line); margin-top: 4px; }
+/* 목록: 지도를 줄여 더 많이 보이게, 버튼은 손가락으로 누르기 쉽게 */
+.app.listing .map { min-height: 22vh; flex: 0 1 22vh; } .app.listing .sheet { max-height: none; flex: 1 1 auto; }
+.list .item button { padding: 12px 14px; font-size: 14px; min-height: 44px; white-space: nowrap; }
+.list .filters { display: flex; gap: 6px; padding: 2px 0 8px; } .list .fchip { flex: 1; padding: 10px 4px; font-size: 13px; background: #f1f1ec; color: var(--ink); border-radius: 999px; white-space: nowrap; }
+.list .fchip.on { background: var(--g); color: #fff; }
+.times .wait { font-size: 13px; color: #8a6d00; }
+/* 길안내와 전달 완료를 한 줄에 나란히 → 버튼 묶음이 낮아져 주소·출입 비번이 더 많이 보임 */
+.next .act .actions .wide { grid-column: auto; } .next .act .actions { grid-template-columns: 1fr 1.25fr; align-items: stretch; }
+.next .act .actions a button { height: 100%; padding: 12px 6px; background: #fff; color: var(--g); border: 2px solid var(--g); } .next .act .actions .big { padding: 14px 6px; }
+.sheet { max-height: 60vh; }
