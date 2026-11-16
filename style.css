@@ -155,3 +155,16 @@ body.toast-undo .undo-line { display: none; }
 button.again-btn { display: block; width: 100%; margin-top: 4px; padding: 14px; background: #a4312a; font-size: 16px; }
 /* 목록을 열었을 때 지도가 왼쪽 일부만 차지하던 문제: 지도는 감싼 틀(map-wrap)을 가로로 꽉 채움 */
 .app.listing .map-wrap .map { flex: 1 1 auto; min-height: 0; width: 100%; }
+
+/* ---- 11-17 오조작 방지 ---- */
+/* 알림은 지도 아래쪽 위에 겹쳐 띄움 → 뜨고 사라져도 카드·목록 위치가 바뀌지 않음 */
+.map-wrap #note { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1300; min-height: 40px; box-shadow: 0 -2px 8px rgba(0,0,0,.12); }
+body.note-on .map-btns { bottom: 52px; }
+.list .item.done { cursor: pointer; } .list .item .more { flex: none; width: 28px; text-align: center; font-size: 22px; color: #b5b5b0; }
+.list .item button.again { background: #a4312a; color: #fff; }
+.list .item.ghost-row { justify-content: space-between; background: #f6f6f2; border-radius: 10px; padding: 8px 10px; color: var(--mute); font-size: 13px; }
+.list .item.flash { background: #fff0d6; transition: background .6s; }
+.list .item small .lateb { color: #a4312a; }
+.rv-info { margin: 12px 0 6px; font-size: 15px; } .rv-cond { margin: 6px 0; padding: 8px 10px; border-radius: 10px; background: #eef4fb; color: #1f4f85; font-size: 14px; }
+.rv-cond.late { background: #fde3e0; color: #8a2a23; } .rc-card .actions { margin-top: 12px; }
+button.ghost.warn { color: #a4312a; border-color: #d9a39e; }
