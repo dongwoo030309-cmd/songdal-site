@@ -15,20 +15,12 @@
     if ([...document.styleSheets].some(ss => ss.href === href)) return;
     const l = document.createElement("link"); l.rel = "stylesheet"; l.href = href; document.head.appendChild(l);
   }
-  function pinHtml(label, color, size) {
+  /* badge: 시간대 글자(오/주/야/휴). 색을 구분하기 어려울 때도 알아볼 수 있게 핀 오른쪽 위에 붙임 */
+  function pinHtml(label, color, size, tip, badge) {
     const s = size || 26;
-    return `<div class="sd-pin" style="width:${s}px;height:${s}px;line-height:${s}px;background:${color};font-size:${s > 24 ? 12 : 10}px">${label}</div>`;
-  }
-
-  async function tryNaver(clientId) {
-    if (!clientId) throw new Error("no client id");
-    let failed = false;
-    window.navermap_authFailure = function () { failed = true; };
-    await loadScript("https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=" + encodeURIComponent(clientId));
-    // 인증 실패 콜백은 비동기로 올 수 있어 잠깐 기다림
-    await new Promise(r => setTimeout(r, 700));
-    if (failed || !window.naver || !window.naver.maps) throw new Error("naver auth failed");
-    return "naver";
+    const b = badge ? `<span class="sd-badge" style="color:${color}">${badge}</span>` : "";
+    const pin = `<div class="sd-pin" style="width:${s}px;height:${s}px;line-height:${s}px;background:${color};font-size:${s > 24 ? 12 : 10}px">${label}</div>${b}`;
+    return (tip || badge) ? `<div class="sd-wrap" style="width:${s}px;height:${s}px">${pin}${tip ? `<div class="sd-tip">${tip}</div>` : ""}</div>` : pin;
   }
 
   function naverMap(el) {
@@ -39,17 +31,18 @@
       kind: "naver", raw: map,
       marker(o) {
         const m = new nm.Marker({ map, position: new nm.LatLng(o.lat, o.lng), zIndex: o.z || 10,
-          icon: { content: pinHtml(o.label, o.color || "#1b5e4a", o.size), anchor: new nm.Point((o.size || 26) / 2, (o.size || 26) / 2) } });
+          icon: { content: pinHtml(o.label, o.color || "#1b5e4a", o.size, o.tip, o.badge), anchor: new nm.Point((o.size || 26) / 2, (o.size || 26) / 2) } });
         if (o.onClick) nm.Event.addListener(m, "click", () => o.onClick(o));
+        if (o.tip) { nm.Event.addListener(m, "mouseover", () => m.setZIndex(5000)); nm.Event.addListener(m, "mouseout", () => m.setZIndex(m.__z || o.z || 10)); }
         items.push(m);
-        return { set(opts) { m.setIcon({ content: pinHtml(opts.label ?? o.label, opts.color || o.color, opts.size || o.size), anchor: new nm.Point((opts.size || o.size || 26) / 2, (opts.size || o.size || 26) / 2) }); m.setZIndex(opts.z || o.z || 10); }, remove() { m.setMap(null); } };
+        return { set(opts) { m.setIcon({ content: pinHtml(opts.label ?? o.label, opts.color || o.color, opts.size || o.size, o.tip, opts.badge === undefined ? o.badge : opts.badge), anchor: new nm.Point((opts.size || o.size || 26) / 2, (opts.size || o.size || 26) / 2) }); m.__z = opts.z || o.z || 10; m.setZIndex(m.__z); }, move(lat, lng) { m.setPosition(new nm.LatLng(lat, lng)); }, remove() { m.setMap(null); } };
       },
       polyline(coords, o) {
         o = o || {};
         const p = new nm.Polyline({ map, path: coords.map(c => new nm.LatLng(c[0], c[1])), strokeColor: o.color || "#1b5e4a",
           strokeWeight: o.weight || 4, strokeOpacity: o.opacity ?? 0.85, strokeStyle: o.dashed ? "shortdash" : "solid", zIndex: 5 });
         items.push(p);
-        return { remove() { p.setMap(null); } };
+        return { setPath(c) { p.setPath(c.map(x => new nm.LatLng(x[0], x[1]))); }, remove() { p.setMap(null); } };
       },
       fit(points) {
         if (!points.length) return;
@@ -60,6 +53,7 @@
       center(lat, lng, zoom) { map.setCenter(new nm.LatLng(lat, lng)); if (zoom) map.setZoom(zoom); },
       clear() { items.forEach(i => i.setMap(null)); items.length = 0; },
       resize() { nm.Event.trigger(map, "resize"); },
+      setType(t) { map.setMapTypeId(t === "satellite" ? nm.MapTypeId.HYBRID : nm.MapTypeId.NORMAL); },
     };
   }
 
@@ -67,49 +61,135 @@
     loadCss(LEAFLET_CSS);
     if (!window.L) await loadScript(LEAFLET_JS);
     const map = L.map(el, { zoomControl: true }).setView([36.50, 127.26], 12);
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+    const street = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+    const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagery © Esri" });
     const layer = L.layerGroup().addTo(map);
     return {
       kind: "osm", raw: map,
       marker(o) {
         const size = o.size || 26;
-        const m = L.marker([o.lat, o.lng], { icon: L.divIcon({ className: "", html: pinHtml(o.label, o.color || "#1b5e4a", size), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }), zIndexOffset: (o.z || 10) * 10 }).addTo(layer);
+        const m = L.marker([o.lat, o.lng], { icon: L.divIcon({ className: "", html: pinHtml(o.label, o.color || "#1b5e4a", size, o.tip, o.badge), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }), zIndexOffset: (o.z || 10) * 10 }).addTo(layer);
         if (o.onClick) m.on("click", () => o.onClick(o));
-        return { set(opts) { const s = opts.size || size; m.setIcon(L.divIcon({ className: "", html: pinHtml(opts.label ?? o.label, opts.color || o.color, s), iconSize: [s, s], iconAnchor: [s / 2, s / 2] })); m.setZIndexOffset((opts.z || o.z || 10) * 10); }, remove() { layer.removeLayer(m); } };
+        if (o.tip) { m.on("mouseover", () => m.setZIndexOffset(50000)); m.on("mouseout", () => m.setZIndexOffset((m.__z || o.z || 10) * 10)); }
+        return { set(opts) { const s = opts.size || size; m.setIcon(L.divIcon({ className: "", html: pinHtml(opts.label ?? o.label, opts.color || o.color, s, o.tip, opts.badge === undefined ? o.badge : opts.badge), iconSize: [s, s], iconAnchor: [s / 2, s / 2] })); m.__z = opts.z || o.z || 10; m.setZIndexOffset(m.__z * 10); }, move(lat, lng) { m.setLatLng([lat, lng]); }, remove() { layer.removeLayer(m); } };
       },
       polyline(coords, o) {
         o = o || {};
         const p = L.polyline(coords, { color: o.color || "#1b5e4a", weight: o.weight || 4, opacity: o.opacity ?? 0.85, dashArray: o.dashed ? "6 8" : null }).addTo(layer);
-        return { remove() { layer.removeLayer(p); } };
+        return { setPath(c) { p.setLatLngs(c); }, remove() { layer.removeLayer(p); } };
       },
       fit(points) { if (points.length) map.fitBounds(points, { padding: [40, 40] }); },
       center(lat, lng, zoom) { map.setView([lat, lng], zoom || map.getZoom()); },
       clear() { layer.clearLayers(); },
       resize() { map.invalidateSize(); },
+      setType(t) { if (t === "satellite") { map.removeLayer(street); sat.addTo(map); } else { map.removeLayer(sat); street.addTo(map); } layer.bringToFront && layer.bringToFront(); },
     };
   }
 
+  /* 그리기 기록을 남겨 두었다가, 네이버 인증이 늦게 실패하면 OpenStreetMap 으로 갈아타서 다시 그립니다. */
+  function recorder(el, first, opts) {
+    let impl = first, ops = [], swapped = false, mapType = "normal";
+    const handles = [];
+    function run(op) {
+      if (op.t === "marker") { op.h.inner = impl.marker(op.o); if (op.h.state) op.h.inner.set(op.h.state); }
+      else if (op.t === "polyline") op.h.inner = impl.polyline(op.c, op.o);
+      else if (op.t === "fit") impl.fit(op.p);
+      else if (op.t === "center") impl.center(op.lat, op.lng, op.z);
+    }
+    const api = {
+      get kind() { return impl.kind; },
+      marker(o) { const h = { inner: null, state: null, set(x) { h.state = x; h.inner && h.inner.set(x); }, move(lat, lng) { o.lat = lat; o.lng = lng; h.inner && h.inner.move && h.inner.move(lat, lng); }, remove() { h.inner && h.inner.remove(); ops = ops.filter((q) => q.h !== h); } }; const op = { t: "marker", o, h }; ops.push(op); run(op); return h; },
+      polyline(c, o) { const h = { inner: null, setPath(nc) { op.c = nc; h.inner && h.inner.setPath && h.inner.setPath(nc); }, remove() { h.inner && h.inner.remove(); ops = ops.filter((q) => q.h !== h); } }; const op = { t: "polyline", c, o, h }; ops.push(op); run(op); return h; },
+      fit(p) { ops = ops.filter((q) => q.t !== "fit" && q.t !== "center"); const op = { t: "fit", p }; ops.push(op); run(op); },
+      center(lat, lng, z) { ops = ops.filter((q) => q.t !== "fit" && q.t !== "center"); const op = { t: "center", lat, lng, z }; ops.push(op); run(op); },
+      clear() { impl.clear(); ops = []; },
+      resize() { impl.resize(); },
+      get type() { return mapType; },
+      setType(t) { mapType = t; impl.setType(t); },
+      async fallback(reason) {
+        if (swapped) return; swapped = true;
+        try { impl.clear(); } catch (e) {}
+        el.innerHTML = "";
+        const fresh = document.createElement("div"); fresh.style.cssText = "width:100%;height:100%"; el.appendChild(fresh);
+        try { impl = await leafletMap(fresh); } catch (e) { impl = noneMap(el); }
+        if (mapType !== "normal") impl.setType(mapType);
+        const replay = ops.slice(); replay.forEach(run);
+        if (opts.onFallback) opts.onFallback(reason);
+      },
+    };
+    return api;
+  }
+  function noneMap(el) {
+    el.innerHTML = '<div style="padding:20px;color:#6b6b66;font-size:13px">지도를 불러오지 못했어요 (인터넷 연결을 확인하세요). 순서표는 아래에서 볼 수 있어요.</div>';
+    const noop = () => ({ set() {}, move() {}, setPath() {}, remove() {} });
+    return { kind: "none", marker: noop, polyline: noop, fit() {}, center() {}, clear() {}, resize() {}, setType() {} };
+  }
+
+  function dist(a, b) { const R = 6371000, r = Math.PI / 180, dLa = (b[0] - a[0]) * r, dLo = (b[1] - a[1]) * r; const h = Math.sin(dLa / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.min(1, Math.sqrt(h))); }
+  /* legs: [{coords:[[lat,lng],...], real, color}] 를 출발부터 차례로 그리며 점이 움직임.
+     opts.onArrive(k) — k번째 구간 끝에 닿았을 때, opts.onDone() — 끝까지 갔을 때. 반환값.stop() 으로 멈춤 */
+  function animate(map, legs, opts) {
+    opts = opts || {};
+    legs.forEach((L) => { L.cum = [0]; for (let j = 1; j < L.coords.length; j++) L.cum.push(L.cum[j - 1] + dist(L.coords[j - 1], L.coords[j])); L.len = L.cum[L.cum.length - 1]; L.dur = Math.max(350, Math.min(1600, 350 + L.len / 5)); });
+    const start = legs[0].coords[0];
+    const head = map.marker({ lat: start[0], lng: start[1], label: "", color: "#ff6a00", size: 18, z: 900 });
+    let k = 0, t0 = null, last = 0, alive = true, raf = 0;
+    let cur = map.polyline([start], { color: legs[0].color || "#ff6a00", weight: 6, opacity: 1 });
+    const step = (now) => {
+      if (!alive) return;
+      if (t0 === null) t0 = now;
+      const L = legs[k]; const f = L.dur ? Math.min(1, (now - t0) / L.dur) : 1;
+      if (now - last > 33 || f === 1) {
+        last = now; const d = f * L.len; let j = 1; while (j < L.cum.length && L.cum[j] < d) j++;
+        const a = L.coords[j - 1], b = L.coords[Math.min(j, L.coords.length - 1)], seg = (L.cum[j] ?? L.len) - L.cum[j - 1];
+        const u = seg > 0 ? (d - L.cum[j - 1]) / seg : 1; const p = [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
+        cur.setPath(L.coords.slice(0, j).concat([p])); head.move(p[0], p[1]);
+      }
+      if (f === 1) {
+        cur.setPath(L.coords); if (opts.onArrive) opts.onArrive(k);
+        k += 1;
+        if (k >= legs.length) { alive = false; head.remove(); if (opts.onDone) opts.onDone(); return; }
+        t0 = now; cur = map.polyline([legs[k].coords[0]], { color: legs[k].color || "#ff6a00", weight: 6, opacity: 1 });
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return { stop() { alive = false; cancelAnimationFrame(raf); head.remove(); }, get running() { return alive; } };
+  }
+
   window.SongdalMap = {
+    animate,
+    _pinHtml: pinHtml,   // 화면 점검용
+    badge(rule) { return { "오전": "오", "주간": "주", "야간": "야", "휴일": "휴" }[rule] || ""; },
     async create(el, opts) {
       opts = opts || {};
       if (!document.getElementById("sd-pin-style")) {
         const st = document.createElement("style"); st.id = "sd-pin-style";
-        st.textContent = ".sd-pin{border-radius:50%;color:#fff;font-weight:700;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.4);border:2px solid #fff;box-sizing:border-box;font-family:-apple-system,system-ui,sans-serif}";
+        st.textContent = ".sd-pin{border-radius:50%;color:#fff;font-weight:700;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.4);border:2px solid #fff;box-sizing:border-box;font-family:-apple-system,system-ui,sans-serif;cursor:pointer}"
+          + ".sd-badge{position:absolute;right:-7px;top:-7px;min-width:15px;height:15px;line-height:13px;border-radius:8px;background:#fff;border:1px solid currentColor;font:700 9.5px/13px -apple-system,'Apple SD Gothic Neo',system-ui,sans-serif;text-align:center;padding:0 1px;box-sizing:border-box;pointer-events:none}"
+          + ".sd-wrap{position:relative}.sd-tip{display:none;position:absolute;left:50%;bottom:calc(100% + 10px);transform:translateX(-50%);background:#fff;color:#1d1d1b;border-radius:10px;padding:8px 11px;box-shadow:0 3px 14px rgba(0,0,0,.28);white-space:nowrap;font:13px/1.45 -apple-system,'Apple SD Gothic Neo',system-ui,sans-serif;text-align:left;pointer-events:none;z-index:10}"
+          + ".sd-tip:after{content:'';position:absolute;left:50%;top:100%;margin-left:-7px;border:7px solid transparent;border-top-color:#fff}"
+          + ".sd-wrap:hover .sd-tip{display:block}.sd-tip b{font-size:14px}.sd-tip .f{color:#6b6b66;font-size:12px}.sd-tip .d{margin-top:4px;padding-top:4px;border-top:1px solid #eee;color:#8a3b00;font-weight:700;font-family:ui-monospace,Menlo,monospace}";
         document.head.appendChild(st);
       }
-      try {
-        await tryNaver(opts.clientId);
-        return naverMap(el);
-      } catch (e) {
-        if (opts.onFallback) opts.onFallback(e);
+      let rec = null, lateFail = false;
+      // 네이버는 인증 실패를 지도 생성 '후에' 알려 주는 경우가 많아서, 언제 오든 받아서 갈아탑니다.
+      window.navermap_authFailure = function () { lateFail = true; if (rec) rec.fallback("naver-auth"); };
+      if (opts.clientId) {
+        try {
+          await loadScript("https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=" + encodeURIComponent(opts.clientId));
+          await new Promise((r) => setTimeout(r, 400));
+          if (!lateFail && window.naver && window.naver.maps) {
+            rec = recorder(el, naverMap(el), opts);
+            return rec;
+          }
+        } catch (e) { /* 스크립트 로드 실패 → 아래로 */ }
       }
-      try {
-        return await leafletMap(el);
-      } catch (e) {
-        el.innerHTML = '<div style="padding:20px;color:#6b6b66;font-size:13px">지도를 불러오지 못했어요 (인터넷 연결 또는 네이버 Dynamic Map 설정을 확인하세요). 순서표는 아래에서 볼 수 있어요.</div>';
-        const noop = () => ({ set() {}, remove() {} });
-        return { kind: "none", marker: noop, polyline: noop, fit() {}, center() {}, clear() {}, resize() {} };
-      }
+      if (opts.onFallback) opts.onFallback(opts.clientId ? "naver-auth" : "no-client-id");
+      let impl;
+      try { impl = await leafletMap(el); } catch (e) { impl = noneMap(el); }
+      rec = recorder(el, impl, {});
+      return rec;
     },
   };
 })();
