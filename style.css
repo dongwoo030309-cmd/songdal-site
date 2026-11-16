@@ -92,3 +92,12 @@ button.icon { padding: 8px 10px; font-size: 13px; background: rgba(255,255,255,.
 .docno { flex: none; min-width: 58px; padding: 4px 8px 5px; border-radius: 12px; background: var(--g); color: #fff; text-align: center; line-height: 1; }
 .docno small { display: block; font-size: 11px; opacity: .85; margin-bottom: 2px; } .docno b { font-size: 30px; font-weight: 800; }
 .sheet.collapsed .docno b { font-size: 24px; }
+/* 방문 결과: 전달 완료는 크게 한 번, 부재·주소 문제는 그 아래 작은 버튼 */
+.actions .big { padding: 16px; font-size: 18px; }
+.actions3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px; } .actions3 button { padding: 11px 4px; font-size: 14px; white-space: nowrap; }
+button.ghost.warn { color: #a4312a; border-color: #d9a39e; }
+.done-msg small { display: block; font-size: 13px; font-weight: 500; color: var(--mute); margin-top: 6px; }
+.list .sum { font-size: 13px; color: var(--ink); padding: 0 0 6px; font-weight: 600; }
+.list .item .rk { font-weight: 700; } .list .item .rk.ok { color: #2f7d4f; } .list .item .rk.absent, .list .item .rk.addr { color: #a4312a; }
+.list .item.again .n { background: #a4312a; } .list .item.again .t { text-decoration: none; color: var(--ink); }
+.next .actions { margin-top: 10px; } .next .times { margin-top: 10px; }
