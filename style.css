@@ -16,7 +16,7 @@ button.icon { padding: 8px 10px; font-size: 13px; background: rgba(255,255,255,.
 .map { flex: 1; min-height: 40vh; }
 .note { background: #fff6e8; color: var(--warn); font-size: 12px; padding: 6px 12px; }
 .sheet { background: #fff; border-top-left-radius: 16px; border-top-right-radius: 16px; box-shadow: 0 -4px 16px rgba(0,0,0,.12); padding: 6px 14px calc(env(safe-area-inset-bottom) + 12px); max-height: 55vh; overflow: auto; }
-.handle { display: block; width: 100%; background: none; padding: 6px 0 10px; border-radius: 0; }
+.handle { display: block; width: 100%; background: none; padding: 10px 0 14px; border-radius: 0; touch-action: none; cursor: grab; position: sticky; top: -6px; z-index: 2; background: #fff; }   /* 끌 수 있게 터치 영역을 넓히고, 목록을 내려도 위에 붙어 있게 */
 .handle span { display: block; width: 44px; height: 5px; border-radius: 3px; background: #cfcfc8; margin: 0 auto; }
 .next .kicker { font-size: 12px; color: var(--mute); display: flex; justify-content: space-between; }
 .next .name { font-size: 22px; font-weight: 800; margin: 2px 0; }
@@ -83,3 +83,12 @@ button.icon { padding: 8px 10px; font-size: 13px; background: rgba(255,255,255,.
 .sync:empty { display: none; }
 .sync.ok { color: #2f7d4f; } .sync.wait, .sync.busy { color: #8a6d00; } .sync.err { color: #a4312a; font-weight: 600; }
 .sync.pending { color: var(--mute); }
+
+/* 목록 보기: 카드 대신 목록을 보여 주고 시트를 더 높임 */
+.sheet.listing { max-height: 72vh; }
+.sheet.listing .next { display: none; }
+/* 서류 번호: 서류 뭉치에서 바로 찾게 크게 */
+.docrow { display: flex; align-items: center; gap: 10px; margin: 4px 0 2px; } .docrow .name { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.docno { flex: none; min-width: 58px; padding: 4px 8px 5px; border-radius: 12px; background: var(--g); color: #fff; text-align: center; line-height: 1; }
+.docno small { display: block; font-size: 11px; opacity: .85; margin-bottom: 2px; } .docno b { font-size: 30px; font-weight: 800; }
+.sheet.collapsed .docno b { font-size: 24px; }
