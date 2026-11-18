@@ -17,9 +17,11 @@ function animateSheet(fn) {
   if (reduceMotion()) return;
   const d = t0 - sh.getBoundingClientRect().top;
   if (Math.abs(d) < 2) return;
-  sh.classList.remove("anim"); sh.style.transform = `translateY(${d}px)`; void sh.offsetHeight;
-  sh.classList.add("anim"); sh.style.transform = "";
-  clearTimeout(animateSheet.t); animateSheet.t = setTimeout(() => sh.classList.remove("anim"), 320);
+  // Web Animations: 끝나면 흔적이 남지 않음. 화면이 가려져 움직임이 멈춰도 0.6초 뒤엔 강제로 끝내서 패널이 밀린 채 남지 않게
+  if (animateSheet.a) animateSheet.a.cancel();
+  if (!sh.animate) return;
+  const a = animateSheet.a = sh.animate([{ transform: `translateY(${d}px)` }, { transform: "translateY(0)" }], { duration: 260, easing: "cubic-bezier(.2,.8,.2,1)" });
+  clearTimeout(animateSheet.t); animateSheet.t = setTimeout(() => a.cancel(), 600);
 }
 const S = { plan: null, map: null, markers: {}, lines: [], order: [], done: {}, showList: false, selected: null, fallbackNote: "" };
 const RULE_CLASS = { "오전": "morning", "주간": "day", "야간": "night", "휴일": "holiday" };
@@ -214,10 +216,19 @@ function saveDone(quiet) {
   if (quiet !== "quiet") scheduleSync();
 }
 /* 바꾸기 직전 상태를 남겨 두면 '되돌리기'로 그대로 돌아감 (마침·미루기·순서 바꾸기·취소 모두) */
-function snapshot(label) { S.history = S.history || []; S.history.push({ done: { ...S.done }, res: { ...(S.res || {}) }, tries: JSON.parse(JSON.stringify(S.tries || {})), order: [...S.order], label }); if (S.history.length > 50) S.history.shift(); }
+function snapshot(label) { S.redo = []; S.history = S.history || []; S.history.push({ done: { ...S.done }, res: { ...(S.res || {}) }, tries: JSON.parse(JSON.stringify(S.tries || {})), order: [...S.order], label }); if (S.history.length > 50) S.history.shift(); }
+/* 되돌리기를 잘못 눌렀을 때(11-18): 되돌린 상태를 S.redo 에 남겨 [다시 하기]로 되살림. 새로 기록하면(snapshot) 다시 하기 목록은 비움 */
+const stateNow = (label) => ({ done: { ...S.done }, res: { ...(S.res || {}) }, tries: JSON.parse(JSON.stringify(S.tries || {})), order: [...S.order], label });
+function restore(h) { S.ghost = null; S.done = h.done; S.res = h.res || {}; S.tries = h.tries || {}; S.order = h.order; S.selected = null; saveDone(); render(); }
 function undo() {
   const h = (S.history || []).pop(); if (!h) return;
-  S.ghost = null; S.done = h.done; S.res = h.res || {}; S.tries = h.tries || {}; S.order = h.order; S.selected = null; saveDone(); render(); toast("되돌렸어요: " + h.label);
+  S.redo = S.redo || []; S.redo.push(stateNow(h.label));
+  restore(h); toast("되돌렸어요: " + h.label, "다시 하기", redo, 10000);
+}
+function redo() {
+  const r = (S.redo || []).pop(); if (!r) return;
+  S.history = S.history || []; S.history.push(stateNow(r.label));
+  restore(r); toast("다시 했어요: " + r.label, "되돌리기", undo, 8000);
 }
 
 /* ---------- 일정 계산 (파이썬 planner.simulate 와 같은 규칙) ---------- */
@@ -261,21 +272,22 @@ function liveBase(useGps) {
    - missed = 아직 시간이 남았는데 이 순서 때문에 놓치는 곳 수. 순서를 고를 때 이 수가 적은 쪽을 먼저 고름(제시간 방문 우선).
    - 맥의 아침 계획(planner.py)은 원래 시간창을 그대로 지킴. */
 function simulate(order, origin, t0) {
-  let t = t0, p = origin, drive = 0, wait = 0, missed = 0, broken = 0; const rows = [], lim = S.plan.return_by;
+  let t = t0, p = origin, drive = 0, wait = 0, missed = 0, broken = 0, over = 0; const rows = [], lim = S.plan.return_by;
   for (const i of order) {
     const st = stopOf(i); const leg = legT(p, i); const arrive = t + leg; const [a, b] = st.window;
     let begin = Math.max(arrive, a), late = false;
     if (b < t0) { late = true; begin = arrive; }                                  // 이미 지난 시간창
     let miss = false;
     if (!late && begin + st.service > b) { late = true; miss = true; missed++; begin = arrive; }   // 이 순서로는 시간창을 놓침
-    if (late && begin + st.service > lim) return { ok: false };
+    // 퇴근 기한을 넘기는 곳도 계산은 끝까지 이어감 — 하루 전체가 기한을 넘겨도 바로 다음 곳 도착 시각·'시간 지남' 표시는 보이게 (11-18 GPT 건의)
+    const pastLim = late && begin + st.service > lim; if (pastLim) over++;
     const strict = !!st.custom && late;   // 맥에서 건별로 직접 정한 시간(폴더 규칙과 달리 '오늘 중'으로 넘어가지 않고 못 지킨 것으로 셈)
     if (strict) broken++;
-    rows.push({ i, arrive, begin, leave: begin + st.service, travel: leg, wait: begin - arrive, late, miss, strict });
+    rows.push({ i, arrive, begin, leave: begin + st.service, travel: leg, wait: begin - arrive, late, miss, strict, over: pastLim });
     t = begin + st.service; drive += leg; wait += begin - arrive; p = i;
   }
   const back = order.length ? legT(p, END_OF()) : 0;
-  return { ok: t + back <= lim || order.length === 0, finish: t + back, drive: drive + back, wait, rows, missed, broken };
+  return { ok: !over && (t + back <= lim || order.length === 0), finish: t + back, drive: drive + back, wait, rows, missed, broken, over };
 }
 function score(order, origin, t0) { const r = simulate(order, origin, t0); return r.ok ? [0, r.broken, r.missed, r.finish, r.drive] : [1, 0, 0, 0, 0]; }   // 직접 정한 시간 → 폴더 시간 → 종료 → 운전
 function less(a, b) { for (let k = 0; k < a.length; k++) { if (a[k] !== b[k]) return a[k] < b[k]; } return false; }
@@ -321,11 +333,11 @@ function render() {
   else {
     const i = S.selected && rem.includes(S.selected) ? S.selected : rem[0]; const st = stopOf(i); const e = etas[i];
     const isNext = i === rem[0];
-    next.innerHTML = `
+    next.innerHTML = `<button class="mini-line" id="mini-line" aria-label="패널 펼치기"><span class="mn">${docNumber(i)}</span><span class="mt"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b><small>${isNext ? "다음 방문" : "선택한 방문지"}${e ? ` · 도착 ${hhmm(e.arrive)}` : ""} · 남은 ${rem.length}건</small></span><span class="mu">▲</span></button>
       ${isNext ? "" : `<div class="picked"><span>다음 차례가 아닌 곳을 보고 있어요</span><button id="btn-back">다음 방문(서류 ${docNumber(rem[0])}번)으로</button></div>`}
       <div class="kicker"><span>${isNext ? "다음 방문" : "선택한 방문지"}${S.collapsed && !(e && e.late) ? (st.custom ? ` · <span class="tag custom">⏰ ${esc(st.custom)}</span>` : ` · <span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)}</span>`) : ""}</span><span class="tools">${(S.history || []).length ? `<button class="tool" id="btn-undo" title="${esc(S.history[S.history.length - 1].label)} 되돌리기">${undoText()} 되돌리기</button>` : ""}${rem.length >= 2 ? `<button class="tool" id="btn-recalc">🔄 재계산</button>` : ""}</span></div>
       ${triesText(i) ? `<div class="again-note">다시 방문하는 곳이에요 · 앞선 방문: ${esc(triesText(i))}</div>` : ""}
-      <div class="docrow"><div class="docno"><small>서류</small><b>${docNumber(i)}</b></div><div class="name">${esc(st.label || st.place || "(이름 없음)")}${e && e.late ? (st.custom ? `<span class="late-chip strict">⛔ ${e.miss ? `지금 순서로는 직접 정한 시간(${esc(st.custom)})을 못 지켜요` : `직접 정한 시간(${esc(st.custom)})이 지났어요`}</span>` : `<span class="late-chip">⏰ ${e.miss ? `지금 순서로는 ${esc(st.rule)} 시간을 넘겨요` : `${esc(st.rule)} 시간 지남 · 오늘 중 방문`}</span>`) : ""}</div></div>
+      <div class="docrow"><div class="docno"><small>서류</small><b>${docNumber(i)}</b></div><div class="name">${esc(st.label || st.place || "(이름 없음)")}${e && e.over && !st.custom ? `<span class="late-chip strict">⏰ 지금 순서로는 퇴근 기한(${hhmm(S.plan.return_by)})을 넘겨요</span>` : e && e.late ? (st.custom ? `<span class="late-chip strict">⛔ ${e.miss ? `지금 순서로는 직접 정한 시간(${esc(st.custom)})을 못 지켜요` : `직접 정한 시간(${esc(st.custom)})이 지났어요`}</span>` : `<span class="late-chip">⏰ ${e.miss ? `지금 순서로는 ${esc(st.rule)} 시간을 넘겨요` : `${esc(st.rule)} 시간 지남 · 오늘 중 방문`}</span>`) : ""}</div></div>
       ${st.label && st.place ? `<div class="place">${esc(st.place)}</div>` : ""}
       ${st.door && st.door.length ? st.door.map((d) => `<div class="door"><span class="k">출입</span><span class="code">${esc(d.code)}</span><span class="dn">${d.note ? `<span class="use">${esc(d.note)}</span>` : ""}<span class="nm">${d.note && d.name ? " · " : ""}${esc(d.name)}</span></span></div>`).join("") : ""}
       <div class="addr">${esc(st.address)}${st.memo ? ` · <b class="memo">${esc(st.memo)}</b>` : ""}${st.folder && st.folder.includes(" + ") ? `<br><b>두 폴더 문건 함께 확인</b> (${esc(st.folder)})` : ""}</div>
@@ -342,7 +354,7 @@ function render() {
       </div>
       <!-- 버튼이 항상 먼저 보이게: 시간·조건 정보는 버튼 아래 -->
       <div class="more-info">${timesHtml(planned[i], e, base, isNext, isNext ? null : base.t + legT(base.origin, i))}</div>
-      <div class="meta more-info">${st.custom ? `<span class="tag custom">⏰ 직접 정한 시간 ${esc(st.custom)}</span>` : `<span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)} ${st.rule === "아무때나" ? "" : hhmm(st.window[0]) + "–" + hhmm(st.window[1])}</span>`}${e ? `<span class="tag">이동 ${mins(e.travel)}</span>` : ""}<span class="hint">남은 ${rem.length}건${sim.ok ? ` · 지금 기준 종료 ${hhmm(sim.finish)}` : " · 기한 안에 다 못 돌 수 있어요"}</span></div>`;
+      <div class="meta more-info">${st.custom ? `<span class="tag custom">⏰ 직접 정한 시간 ${esc(st.custom)}</span>` : `<span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)} ${st.rule === "아무때나" ? "" : hhmm(st.window[0]) + "–" + hhmm(st.window[1])}</span>`}${e ? `<span class="tag">이동 ${mins(e.travel)}</span>` : ""}<span class="hint">남은 ${rem.length}건${sim.ok ? ` · 지금 기준 종료 ${hhmm(sim.finish)}` : ` · 퇴근 기한(${hhmm(S.plan.return_by)}) 안에 ${sim.over ? `${sim.over}건` : "다"} 못 돌 수 있어요`}</span></div>`;
     if ($("btn-undo")) $("btn-undo").onclick = undo;
     if ($("btn-back")) $("btn-back").onclick = () => { S.selected = null; render(); $("sheet").scrollTop = 0; followNext(); };
     if ($("btn-recalc")) $("btn-recalc").onclick = () => openRecalc(true);
@@ -388,6 +400,11 @@ function moveRem(i, to) {
   rem.splice(k, 1); rem.splice(to, 0, i);
   S.order = S.order.filter((x) => S.done[x]).concat(rem); S.selected = null; S.moved = i; saveDone(); render();
 }
+/* 순서 바꾸기 줄의 짧은 주소: 위치를 보고 순서를 정할 수 있게 (11-18 GPT 건의). 앞의 '세종(특별자치)시'는 뺌 */
+function shortAddr(st) {
+  const a = String(st.address || "").replace(/^\s*세종(특별자치)?시\s*/, "").trim();
+  return a || (st.label && st.place ? st.place : "");
+}
 function renderReorder(box, etas) {
   const rem = remaining();
   const last = (S.history || [])[S.history.length - 1], canUndo = last && /순서 바꾸기/.test(last.label || "");
@@ -397,7 +414,7 @@ function renderReorder(box, etas) {
   rem.forEach((i, k) => {
     const st = stopOf(i), e = etas[i];
     const div = document.createElement("div"); div.className = "item reo" + (S.moved === i ? " flash" : ""); div.dataset.i = String(i);
-    div.innerHTML = `<span class="handle" aria-label="끌어서 순서 바꾸기">☰</span><div class="n">${docNumber(i)}</div><div class="t"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b><small>${k + 1}번째${e ? ` · 도착 ${hhmm(e.arrive)}` : ""}${e && e.late ? (st.custom ? ` · <b class="lateb strict">⛔ 직접 ${esc(st.custom)} 못 지킴</b>` : ` · <b class="lateb">${e.miss ? `${esc(st.rule)} 넘김` : `${esc(st.rule)} 지남`}</b>`) : ""}</small></div>
+    div.innerHTML = `<span class="handle" aria-label="끌어서 순서 바꾸기">☰</span><div class="n">${docNumber(i)}</div><div class="t"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b>${shortAddr(st) ? `<span class="ra">${esc(shortAddr(st))}</span>` : ""}<small>${k + 1}번째${e ? ` · 도착 ${hhmm(e.arrive)}` : ""}${e && e.over && !st.custom ? ` · <b class="lateb strict">퇴근 기한 넘김</b>` : e && e.late ? (st.custom ? ` · <b class="lateb strict">⛔ 직접 ${esc(st.custom)} 못 지킴</b>` : ` · <b class="lateb">${e.miss ? `${esc(st.rule)} 넘김` : `${esc(st.rule)} 지남`}</b>`) : ""}</small></div>
       <div class="mv"><button class="ghost up" ${k === 0 ? "disabled" : ""} aria-label="한 칸 앞으로">▲</button><button class="ghost dn" ${k === rem.length - 1 ? "disabled" : ""} aria-label="한 칸 뒤로">▼</button></div>`;
     div.querySelector(".up").onclick = () => moveRem(i, k - 1);
     div.querySelector(".dn").onclick = () => moveRem(i, k + 1);
@@ -425,11 +442,13 @@ function dragHandle(h, row, box, i, k) {
     };
     timer = setInterval(edge, 30);
     h.onpointermove = (e) => { lastY = e.clientY; update(); };
-    h.onpointerup = h.onpointercancel = () => {
+    const end = (cancelled) => {
       clearInterval(timer); h.onpointermove = h.onpointerup = h.onpointercancel = null;
       rows.forEach((r) => (r.style.transform = "")); row.classList.remove("dragging");
-      if (to !== k) moveRem(i, to);
+      if (!cancelled && to !== k) moveRem(i, to);   // 끌기가 취소되면(전화 등) 화면만 원래대로, 순서는 안 바꿈 (11-18 GPT 지적)
     };
+    h.onpointerup = () => end(false);
+    h.onpointercancel = () => end(true);
   };
 }
 function renderList(etas) {
@@ -438,7 +457,10 @@ function renderList(etas) {
   $("sheet").classList.toggle("listing", !!S.showList); $("app").classList.toggle("listing", !!S.showList);
   if (wasListing !== !!S.showList && S.map) setTimeout(() => { S.map.resize(); if (S.selected != null && S.order.includes(S.selected) && !S.done[S.selected]) fitLeg(S.selected); else followNext(); }, 60);
   if (!S.animating) { $("btn-list").classList.toggle("on", !!S.showList); $("btn-card").classList.toggle("on", !S.showList); }
-  $("btn-dock-undo").disabled = !(S.history || []).length; $("btn-dock-recalc").disabled = remaining().length < 2;
+  { const hs = S.history || [], u = $("btn-dock-undo"), m = /서류 (\d+)번/.exec((hs[hs.length - 1] || {}).label || "");
+    u.disabled = !hs.length; u.querySelector("span").textContent = m ? `${m[1]}번 되돌리기` : "되돌리기"; }
+  if ($("btn-redo")) { const rs = S.redo || [], r = rs[rs.length - 1]; $("btn-redo").classList.toggle("hidden", !r); if (r) $("btn-redo").textContent = `↷ 다시 하기 · ${r.label}`; }
+  $("btn-dock-recalc").disabled = remaining().length < 2;
   if (!S.showList) { S.reorder = false; return; }
   if (S.reorder) return renderReorder(box, etas);
   const rem = remaining(), cnt = resultCounts(), nAgain = cnt.absent + cnt.addr;
@@ -472,7 +494,7 @@ function renderList(etas) {
     const rk = resultOf(i);
     const div = document.createElement("div"); div.className = "item" + (done ? " done" : "") + (rk && rk !== "ok" ? " again" : "") + (cur ? " cur" : "");
     div.dataset.doc = String(docNumber(i)); div.dataset.i = String(i); div.dataset.q = `${st.label || ""} ${st.place || ""}`.toLowerCase();
-    div.innerHTML = `<div class="n">${docNumber(i)}</div><div class="t"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b>${st.label && st.place ? " · " + esc(st.place) : ""}<small>${st.custom ? `⏰ 직접 ${esc(st.custom)}` : esc(st.rule)}${st.door && st.door.length ? " · 출입 " + esc(st.door[0].code) : ""}${done ? ` · <span class="rk ${rk}">${RESULTS[rk]}</span> ${hhmm(S.done[i])}` : e ? ` · 도착 ${hhmm(e.arrive)}${e.wait > 60 ? ` · <b class="from">${hhmm(e.begin)}부터 송달</b>` : ""}${e.late ? (st.custom ? ` · <b class="lateb strict">⛔ 직접 ${esc(st.custom)} 못 지킴</b>` : ` · <b class="lateb">${e.miss ? `지금 순서로는 ${esc(st.rule)} 넘김` : `${esc(st.rule)} 시간 지남 · 오늘 중`}</b>`) : ""}` : ""}${triesText(i) ? ` · <span class="rk absent">재방문</span> (${esc(triesText(i))})` : ""}</small></div>${done && rk !== "ok" ? `<button class="again">다시 방문…</button>` : done ? `<span class="more" aria-hidden="true">›</span>` : `<button class="ghost go">보기</button>`}`;
+    div.innerHTML = `<div class="n">${docNumber(i)}</div><div class="t"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b>${st.label && st.place ? " · " + esc(st.place) : ""}<small>${st.custom ? `⏰ 직접 ${esc(st.custom)}` : esc(st.rule)}${st.door && st.door.length ? " · 출입 " + esc(st.door[0].code) : ""}${done ? ` · <span class="rk ${rk}">${RESULTS[rk]}</span> ${hhmm(S.done[i])}` : e ? ` · 도착 ${hhmm(e.arrive)}${e.wait > 60 ? ` · <b class="from">${hhmm(e.begin)}부터 송달</b>` : ""}${e.over && !st.custom ? ` · <b class="lateb strict">퇴근 기한 넘김</b>` : e.late ? (st.custom ? ` · <b class="lateb strict">⛔ 직접 ${esc(st.custom)} 못 지킴</b>` : ` · <b class="lateb">${e.miss ? `지금 순서로는 ${esc(st.rule)} 넘김` : `${esc(st.rule)} 시간 지남 · 오늘 중`}</b>`) : ""}` : ""}${triesText(i) ? ` · <span class="rk absent">재방문</span> (${esc(triesText(i))})` : ""}</small></div>${done && rk !== "ok" ? `<button class="again">다시 방문…</button>` : done ? `<span class="more" aria-hidden="true">›</span>` : `<button class="ghost go">보기</button>`}`;
     const ag = div.querySelector("button.again"), go = div.querySelector("button.go");
     if (ag) ag.onclick = (ev) => { ev.stopPropagation(); S.ghost = null; const h = div.offsetHeight; askRevisit(i); S.ghostDraft = { slot: n, h }; };
     if (go) go.onclick = () => { S.ghost = null; S.selected = i; S.showList = false; render(); fitLeg(i); };
@@ -561,12 +583,12 @@ function getGps() {
 /* 재계산 미리보기: 새 순서로 제시간이 되는 곳과 그래도 시간을 넘기는 곳 (서류 번호·이름·도착 시각 전→후) */
 function fixList(pr) {
   if (!pr.next.ok) return "";
-  const cur = Object.fromEntries((pr.cur.rows || []).map((r) => [r.i, r])), nx = pr.next.rows || [];
+  const cur = Object.fromEntries((pr.cur.ok ? pr.cur.rows || [] : []).map((r) => [r.i, r])), nx = pr.next.rows || [];
   const who = (i) => `서류 <b>${docNumber(i)}</b>번 ${esc(stopOf(i).label || stopOf(i).place || "")}`;
   const win = (i) => { const st = stopOf(i); return st.custom ? `<b>직접 ${esc(st.custom)}</b>` : `${esc(st.rule)} ${hhmm(st.window[0])}–${hhmm(st.window[1])}`; };
   const fixed = nx.filter((r) => !r.late && cur[r.i] && cur[r.i].miss);
   // 지금 순서가 퇴근 기한을 넘겨 중간에 계산이 끊겼으면 곳별 비교가 없음 → '새로/그래도'를 나누지 않고 새 순서에서 넘기는 곳만 보여 줌
-  const known = !!(pr.cur.rows && pr.cur.rows.length);
+  const known = !!(pr.cur.ok && pr.cur.rows && pr.cur.rows.length);
   const worse = known ? nx.filter((r) => r.miss && !r.strict && !(cur[r.i] && cur[r.i].miss)) : [];   // 지금 순서로는 제시간인데 새 순서에서 늦어지는 곳
   const still = nx.filter((r) => r.miss && !r.strict && (!known || (cur[r.i] && cur[r.i].miss)));
   if (!fixed.length && !worse.length && !still.length && !nx.some((r) => r.strict)) return "";
@@ -586,7 +608,10 @@ async function openRecalc(useGps, ready) {
   const changed = pr.nextOrder.join(",") !== pr.rem.join(",");
   const chips = pr.nextOrder.map((i, k) => `<span class="chip ${pr.rem[k] !== i ? "moved" : ""}">${docNumber(i)}</span>`).join("→");
   const line = (lbl, r) => r.ok ? `<tr><td>${lbl}</td><td><b>${hhmm(r.finish)}</b></td><td>${mins(r.drive)}</td><td>${mins(r.wait)}</td></tr>` : `<tr><td>${lbl}</td><td colspan="3" class="bad">기한 안에 다 못 돌아요</td></tr>`;
-  const verdict = !changed ? "지금 순서가 이미 가장 좋아요." :
+  // 새 순서로도 퇴근 기한 안에 다 못 돌면 비교할 수 없음 → '0분 줄어요' 같은 안내·적용을 막음 (11-18 GPT 지적)
+  const noGood = !pr.next.ok;
+  const verdict = noGood ? `<b>새 순서로도 퇴근 기한(${hhmm(S.plan.return_by)}) 안에 다 못 돌아요.</b> 비교할 수 없어서 바꾸지 않아요. 몇 곳은 내일로 미루거나 맥에서 다시 계산해 주세요.` :
+    !changed ? "지금 순서가 이미 가장 좋아요." :
     g.fixes && pr.cur.ok ? ((pr.cur.broken || 0) > (pr.next.broken || 0) ? `바꾸면 <b>직접 정한 시간을 지키는 곳이 ${pr.cur.broken - pr.next.broken}곳 늘어요</b>. ` : "") + (pr.cur.missed > pr.next.missed ? `${(pr.cur.broken || 0) > (pr.next.broken || 0) ? "" : "바꾸면 "}<b>제시간에 갈 수 있는 곳이 ${pr.cur.missed - pr.next.missed}곳 늘어요</b>. ` : "") + (pr.next.missed ? `그래도 ${pr.next.missed}곳은 시간을 넘겨요(오늘 중 방문). ` : "") +
       (() => { const d = Math.round((pr.next.finish - pr.cur.finish) / 60); return d === 0 ? "끝나는 시각은 같아요." : `끝나는 시각은 ${Math.abs(d)}분 ${d > 0 ? "늦어져요" : "빨라져요"}.`; })() :
     g.fixes ? "지금 순서로는 퇴근 기한 안에 다 못 돌아서, 돌 수 있게 바꿨어요." + (pr.next.missed ? ` ${pr.next.missed}곳은 시간을 넘겨요(오늘 중 방문).` : "") :
@@ -597,9 +622,9 @@ async function openRecalc(useGps, ready) {
     ${note ? `<div class="hint warn">${esc(note)}</div>` : ""}
     <table class="rc-table"><tr><th></th><th>종료</th><th>운전</th><th>대기</th></tr>${line("지금 순서", pr.cur)}${line("새 순서", pr.next)}</table>
     <div class="rc-verdict">${verdict}</div>
-    ${changed ? fixList(pr) : ""}
-    ${changed ? `<div class="rc-chips">${chips}</div><div class="hint">숫자는 아침에 인쇄한 <b>서류 번호</b>예요. 번호는 그대로이고 가는 순서만 바뀌어요. 주황색·밑줄이 자리가 바뀐 곳이에요.</div>` : ""}
-    <div class="actions">${changed ? `<button id="rc-apply">이 순서로 바꾸기</button><button class="ghost" id="rc-cancel">그대로 두기</button>` : `<button class="ghost wide" id="rc-cancel">닫기</button>`}</div>
+    ${changed && !noGood ? fixList(pr) : ""}
+    ${changed && !noGood ? `<div class="rc-chips">${chips}</div><div class="hint">숫자는 아침에 인쇄한 <b>서류 번호</b>예요. 번호는 그대로이고 가는 순서만 바뀌어요. 주황색·밑줄이 자리가 바뀐 곳이에요.</div>` : ""}
+    <div class="actions">${changed && !noGood ? `<button id="rc-apply">이 순서로 바꾸기</button><button class="ghost" id="rc-cancel">그대로 두기</button>` : `<button class="ghost wide" id="rc-cancel">닫기</button>`}</div>
   </div>`;
   $("rc-cancel").onclick = () => box.classList.add("hidden");
   if ($("rc-apply")) $("rc-apply").onclick = () => {
@@ -639,6 +664,11 @@ function playRoute() {
   });
 }
 
+/* ---------- 지도 크게 보기(11-18): 패널을 끝까지 내리면 한 줄만 남김 ---------- */
+function setMini(on) {
+  S.mini = on; $("sheet").classList.toggle("mini", on); $("app").classList.toggle("mini", on);
+  try { localStorage.setItem("songdal_mini", on ? "1" : "0"); } catch (e) {}
+}
 /* ---------- 카드 접기 ---------- */
 function setCollapsed(on) {
   S.collapsed = on; $("sheet").classList.toggle("collapsed", on);
@@ -816,15 +846,15 @@ async function boot() {
   try { const t = localStorage.getItem("songdal_maptype"); if (t === "satellite") applyType(t); } catch (e) {}
   $("btn-maptype").onclick = () => { closeMenu(); applyType(S.map.type === "satellite" ? "normal" : "satellite"); };
   // 맨 아래 메뉴: 카드 / 목록 / 재계산 / 되돌리기
-  $("btn-list").onclick = () => { S.ghost = null; if (S.animating) return stopAnimation(); if (S.showList) return; animateSheet(() => { S.showList = true; setCollapsed(false); render(); }); $("sheet").scrollTop = 0; };
-  $("btn-card").onclick = () => { S.ghost = null; if (!S.showList && !S.collapsed) return; animateSheet(() => { S.showList = false; S.reorder = false; setCollapsed(false); render(); }); $("sheet").scrollTop = 0; };
+  $("btn-list").onclick = () => { S.ghost = null; if (S.animating) return stopAnimation(); if (S.showList && !S.mini) return; animateSheet(() => { setMini(false); S.showList = true; setCollapsed(false); render(); }); $("sheet").scrollTop = 0; };
+  $("btn-card").onclick = () => { S.ghost = null; if (!S.showList && !S.collapsed && !S.mini) return; animateSheet(() => { setMini(false); S.showList = false; S.reorder = false; setCollapsed(false); render(); }); $("sheet").scrollTop = 0; };
   $("btn-dock-recalc").onclick = () => { if (remaining().length >= 2) openRecalc(true); };
   $("btn-dock-undo").onclick = () => undo();
   // 위 찾기 창: 서류 번호(숫자)나 이름·장소로 오늘 방문표 안에서 찾음 → 목록이 열리고 맞는 줄만 보임
   const q = $("top-q"), qx = $("top-q-x");
   q.addEventListener("input", () => {
     S.listQ = q.value; qx.classList.toggle("hidden", !q.value);
-    if (!S.showList && q.value) animateSheet(() => { S.showList = true; S.reorder = false; S.listFilter = "all"; setCollapsed(false); render(); });
+    if ((!S.showList || S.mini) && q.value) animateSheet(() => { setMini(false); S.showList = true; S.reorder = false; S.listFilter = "all"; setCollapsed(false); render(); });
     else render();
   });
   q.addEventListener("keydown", (e) => { if (e.key === "Enter") q.blur(); });
@@ -835,31 +865,74 @@ async function boot() {
   $("btn-reload").onclick = () => location.reload();
   $("btn-reset").onclick = () => { closeMenu(); if (confirm("오늘 기록(전달·부재·주소 문제)을 모두 지우고 순서도 처음대로 돌릴까요?")) { snapshot("기록 모두 지우기"); S.done = {}; S.res = {}; S.tries = {}; S.order = [...S.plan.order]; saveDone(); render(); followNext(); } };
   $("btn-send").onclick = () => { closeMenu(); sendResults(); };
-  /* 회색 바: 누르면 접기/펼치기, 끌면 단계 이동 — 위로 끌면 접힘 → 카드 → 목록, 아래로 끌면 목록 → 카드 → 접힘 */
-  const sheetStep = (dir) => animateSheet(() => {
-    if (dir < 0) { if (S.collapsed) setCollapsed(false); else if (!S.showList && !S.animating) S.showList = true; }
-    else { if (S.showList) { S.showList = false; S.reorder = false; } else if (!S.collapsed) setCollapsed(true); }
-    render(); $("sheet").scrollTop = 0;
-  });
   // 누름: 접기/펼치기. 목록을 보던 중이면 목록을 닫고 접음(안 그러면 카드도 목록도 안 보임)
-  const tapHandle = () => animateSheet(() => { if (S.showList) { S.showList = false; S.reorder = false; } setCollapsed(!S.collapsed); render(); });
-  const handle = $("handle"), sheet = $("sheet"); let drag = null;
-  handle.addEventListener("click", (e) => { if (e.detail === 0) tapHandle(); });   // 키보드(Enter·Space)로 누른 경우. 손가락 누름은 아래 pointerup 에서 처리
-  handle.addEventListener("pointerdown", (e) => { drag = { y: e.clientY, dy: 0 }; try { handle.setPointerCapture(e.pointerId); } catch (err) {} });
-  handle.addEventListener("pointermove", (e) => {
-    if (!drag) return; drag.dy = e.clientY - drag.y;
-    sheet.style.transition = "none"; sheet.style.transform = `translateY(${Math.max(-24, Math.min(160, drag.dy))}px)`;   // 손가락을 따라 살짝 움직임
-  });
-  const endDrag = (e, cancelled) => {
-    if (!drag) return; const dy = drag.dy; drag = null;
-    sheet.style.transition = "transform .18s"; sheet.style.transform = "";
-    if (cancelled) return;
-    if (Math.abs(dy) < 10) tapHandle();   // 거의 안 움직였으면 '누름'
-    else if (Math.abs(dy) >= 28) sheetStep(dy < 0 ? -1 : 1);
+  const tapHandle = () => animateSheet(() => { if (S.mini) { setMini(false); render(); return; } if (S.showList) { S.showList = false; S.reorder = false; } setCollapsed(!S.collapsed); render(); });
+  /* 회색 바(또는 한 줄) 끌기(11-18 저녁, 참고 영상): 패널이 손가락을 그대로 따라오고, 손을 떼면 가까운 높이로 맞춤
+     (한 줄 · 접힘 · 카드 · 전체 목록). 빠르게 튕기면 그 방향의 다음 높이로. 거의 안 움직였으면 '누름'(접기/펼치기). */
+  const sheet = $("sheet"); let drag = null;
+  S.snapH = S.snapH || {};
+  const sheetState = () => S.showList ? "list" : S.mini ? "mini" : S.collapsed ? "collapsed" : "card";
+  const applyState = (k) => {
+    setMini(k === "mini"); setCollapsed(k === "mini" || k === "collapsed");
+    if (k !== "list") { S.showList = false; S.reorder = false; } else S.showList = true;
   };
-  handle.addEventListener("pointerup", (e) => endDrag(e, false));
-  handle.addEventListener("pointercancel", (e) => endDrag(e, true));
-  try { if (localStorage.getItem("songdal_collapsed") === "1") setCollapsed(true); } catch (e) {}
+  const limits = () => {
+    const foot = document.querySelector(".sheet-foot").offsetHeight, top = document.querySelector(".topbar");
+    const avail = innerHeight - foot - (top.offsetTop + top.offsetHeight + 10);
+    const card = Math.min(Math.max(innerHeight * 0.5, 400), avail);
+    const snaps = [["mini", S.snapH.mini || 80], ["collapsed", Math.min(S.snapH.collapsed || 300, card - 40)], ["card", card], ["list", avail]];
+    return { avail, snaps };
+  };
+  const remember = () => { if (!drag && !sheet.style.height) S.snapH[sheetState()] = sheet.offsetHeight; };
+  if (window.ResizeObserver) new ResizeObserver(remember).observe(sheet);
+  const onDown = (e) => {
+    if (sheet.classList.contains("dragging") && !drag) { sheet.classList.remove("dragging"); sheet.style.height = ""; sheet.style.maxHeight = ""; }
+    if (!e.target.closest("#handle, #mini-line") || S.animating) return;
+    const L = limits();
+    drag = { y0: e.clientY, h0: sheet.offsetHeight, moved: false, pts: [[e.clientY, performance.now()]], L, live: sheetState(), id: e.pointerId };
+    try { sheet.setPointerCapture(e.pointerId); } catch (err) {}   // 패널에 붙잡음 — 끄는 중 내용이 다시 그려져도 손가락을 놓치지 않게
+  };
+  const onMove = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dy = e.clientY - drag.y0;
+    if (!drag.moved && Math.abs(dy) < 6) return;
+    if (!drag.moved) {
+      drag.moved = true; sheet.classList.remove("anim"); sheet.classList.add("dragging");
+      if (S.mini) { setMini(false); render(); }   // 한 줄에서 끌어 올리기 시작하면 내용은 접힌 카드로
+    }
+    const h = Math.max(drag.L.snaps[0][1] - 10, Math.min(drag.L.avail, drag.h0 - dy));
+    sheet.style.maxHeight = "none"; sheet.style.height = h + "px";
+    document.documentElement.style.setProperty("--sheet-h", h + "px");
+    drag.pts.push([e.clientY, performance.now()]); if (drag.pts.length > 6) drag.pts.shift();
+    // 끄는 동안 내용도 가까운 높이에 맞게 바꿈(접힘·카드·목록). '한 줄'은 손을 뗄 때만
+    const near = drag.L.snaps.filter(([k]) => k !== "mini").reduce((b, x) => Math.abs(x[1] - h) < Math.abs(b[1] - h) ? x : b)[0];
+    if (near !== drag.live) { drag.live = near; applyState(near); render(); }
+  };
+  const onUp = (e, cancelled) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag; drag = null;
+    if (!d.moved) { if (!cancelled) tapHandle(); return; }
+    // 손을 떼기 직전 속도(px/ms, 아래로 +)
+    const a = d.pts[0], b = d.pts[d.pts.length - 1], v = b[1] > a[1] ? (b[0] - a[0]) / (b[1] - a[1]) : 0;
+    const h = sheet.offsetHeight, snaps = d.L.snaps.slice().sort((x, y) => x[1] - y[1]);
+    let target = snaps.reduce((best, x) => Math.abs(x[1] - h) < Math.abs(best[1] - h) ? x : best);
+    if (!cancelled && v < -0.45) target = snaps.find((x) => x[1] > h + 12) || snaps[snaps.length - 1];
+    else if (!cancelled && v > 0.45) target = snaps.slice().reverse().find((x) => x[1] < h - 12) || snaps[0];
+    if (cancelled) target = [d.live];
+    animateSheet(() => {
+      sheet.classList.remove("dragging"); sheet.style.height = ""; sheet.style.maxHeight = "";
+      applyState(target[0]); render(); sheet.scrollTop = 0;
+    });
+  };
+  sheet.addEventListener("pointerdown", onDown);
+  sheet.addEventListener("pointermove", onMove);
+  sheet.addEventListener("pointerup", (e) => onUp(e, false));
+  sheet.addEventListener("pointercancel", (e) => onUp(e, true));
+  $("handle").addEventListener("click", (e) => { if (e.detail === 0) tapHandle(); });   // 키보드(Enter·Space)로 누른 경우
+  try { if (localStorage.getItem("songdal_collapsed") === "1") setCollapsed(true); if (localStorage.getItem("songdal_mini") === "1") { setCollapsed(true); setMini(true); } } catch (e) {}
+  // 한 줄만 남았을 때 그 줄을 누르면 펼침(접힌 카드)
+  $("next").addEventListener("click", (e) => { if (e.detail === 0 && S.mini && e.target.closest("#mini-line")) animateSheet(() => { setMini(false); render(); }); });   // 키보드로 누른 경우(손가락은 끌기 코드에서)
+  if ($("btn-redo")) $("btn-redo").onclick = () => { closeMenu(); redo(); };
   try { if (S.plan.sync && !LOCAL && localStorage.getItem(syncKey())) setTimeout(pushSync, 1500); } catch (e) {}
   setTimeout(retryOldDays, 4000);
   if (LOCAL) { const demo = new URLSearchParams(location.search).get("demo"); if (demo) showDemo(demo); }
