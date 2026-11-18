@@ -26,10 +26,27 @@
     return (tip || badge) ? `<div class="sd-wrap" style="width:${s}px;height:${s}px">${pin}${tip ? `<div class="sd-tip">${tip}</div>` : ""}</div>` : pin;
   }
 
+  /* 아이콘 핀(11-18, 사용자 요청 · 네이버지도 저장 장소처럼): 숫자 없이 둥근 바탕 + 흰 별 / 집 모양.
+     o.icon = "star" | "home", o.color = 바탕색(폴더 색), o.ring = 다음 방문(바깥 고리), o.dim = 마친 곳(흐리게) */
+  const GLYPH = {
+    star: '<path fill="#fff" d="M12 3.2l2.6 5.3 5.8.85-4.2 4.1 1 5.8L12 16.5l-5.2 2.75 1-5.8-4.2-4.1 5.8-.85z"/>',
+    home: '<path fill="#fff" d="M12 3.6 3 11.2h2.6V20h4.9v-5.4h3V20h4.9v-8.8H21z"/>',
+  };
+  function iconHtml(o) {
+    const s = o.size || 22, g = GLYPH[o.icon] || GLYPH.star;
+    const cls = "sd-ico" + (o.ring ? " ring" : "") + (o.dim ? " dim" : "");
+    return `<div class="sd-z" style="width:${s}px;height:${s}px"><div class="${cls}" style="width:${s}px;height:${s}px;background:${o.color || "#1b5e4a"}"><svg viewBox="0 0 24 24" width="${Math.round(s * 0.64)}" height="${Math.round(s * 0.64)}" aria-hidden="true">${g}</svg></div></div>`;
+  }
+  const htmlOf = (o) => o.icon ? iconHtml(o) : pinHtml(o.label, o.color || "#1b5e4a", o.size, o.tip, o.badge);
+  const merged = (o, opts) => ({ ...o, ...opts, label: opts.label ?? o.label, color: opts.color || o.color, badge: opts.badge === undefined ? o.badge : opts.badge });
+  /* 지도를 축소하면 아이콘 핀도 작게 (지도를 덜 가리게, 11-18 사용자 요청) — 확대 수준을 지도 칸에 data-zb 로 표시하고 CSS 가 크기를 줄임 */
+  function zoomBucket(el, z) { el.dataset.zb = z <= 11 ? "far" : z <= 13 ? "mid" : "near"; }
+
   function naverMap(el) {
     const nm = window.naver.maps;
     const map = new nm.Map(el, { center: new nm.LatLng(36.50, 127.26), zoom: 12, mapDataControl: false, logoControlOptions: { position: nm.Position.BOTTOM_LEFT }, zoomControl: !window.SONGDAL_NO_ZOOM });
     const items = [];
+    zoomBucket(el, map.getZoom()); nm.Event.addListener(map, "zoom_changed", (z) => zoomBucket(el, z));
     /* 위성(겹쳐보기)에서 산의 등산로 선(overlayType 'ar')을 뺌 — 사용자 요청(11-18). 기본 겹쳐보기는 'ar.bg.ol.sw.lko'.
        나머지(배경·도로·지하철·한국어 이름)는 그대로. 안 되면 기본 겹쳐보기를 씀. */
     try {
@@ -40,11 +57,11 @@
       kind: "naver", raw: map,
       marker(o) {
         const m = new nm.Marker({ map, position: new nm.LatLng(o.lat, o.lng), zIndex: o.z || 10,
-          icon: { content: pinHtml(o.label, o.color || "#1b5e4a", o.size, o.tip, o.badge), anchor: new nm.Point((o.size || 26) / 2, (o.size || 26) / 2) } });
+          icon: { content: htmlOf(o), anchor: new nm.Point((o.size || 26) / 2, (o.size || 26) / 2) } });
         if (o.onClick) nm.Event.addListener(m, "click", () => o.onClick(o));
         if (o.tip) { nm.Event.addListener(m, "mouseover", () => m.setZIndex(5000)); nm.Event.addListener(m, "mouseout", () => m.setZIndex(m.__z || o.z || 10)); }
         items.push(m);
-        return { set(opts) { m.setIcon({ content: pinHtml(opts.label ?? o.label, opts.color || o.color, opts.size || o.size, o.tip, opts.badge === undefined ? o.badge : opts.badge), anchor: new nm.Point((opts.size || o.size || 26) / 2, (opts.size || o.size || 26) / 2) }); m.__z = opts.z || o.z || 10; m.setZIndex(m.__z); }, move(lat, lng) { m.setPosition(new nm.LatLng(lat, lng)); }, remove() { m.setMap(null); } };
+        return { set(opts) { const q = merged(o, opts); m.setIcon({ content: htmlOf(q), anchor: new nm.Point((q.size || 26) / 2, (q.size || 26) / 2) }); m.__z = opts.z || o.z || 10; m.setZIndex(m.__z); }, move(lat, lng) { m.setPosition(new nm.LatLng(lat, lng)); }, remove() { m.setMap(null); } };
       },
       polyline(coords, o) {
         o = o || {};
@@ -73,14 +90,15 @@
     const street = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
     const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagery © Esri" });
     const layer = L.layerGroup().addTo(map);
+    zoomBucket(el, map.getZoom()); map.on("zoomend", () => zoomBucket(el, map.getZoom()));
     return {
       kind: "osm", raw: map,
       marker(o) {
         const size = o.size || 26;
-        const m = L.marker([o.lat, o.lng], { icon: L.divIcon({ className: "", html: pinHtml(o.label, o.color || "#1b5e4a", size, o.tip, o.badge), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }), zIndexOffset: (o.z || 10) * 10 }).addTo(layer);
+        const m = L.marker([o.lat, o.lng], { icon: L.divIcon({ className: "", html: htmlOf({ ...o, size }), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }), zIndexOffset: (o.z || 10) * 10 }).addTo(layer);
         if (o.onClick) m.on("click", () => o.onClick(o));
         if (o.tip) { m.on("mouseover", () => m.setZIndexOffset(50000)); m.on("mouseout", () => m.setZIndexOffset((m.__z || o.z || 10) * 10)); }
-        return { set(opts) { const s = opts.size || size; m.setIcon(L.divIcon({ className: "", html: pinHtml(opts.label ?? o.label, opts.color || o.color, s, o.tip, opts.badge === undefined ? o.badge : opts.badge), iconSize: [s, s], iconAnchor: [s / 2, s / 2] })); m.__z = opts.z || o.z || 10; m.setZIndexOffset(m.__z * 10); }, move(lat, lng) { m.setLatLng([lat, lng]); }, remove() { layer.removeLayer(m); } };
+        return { set(opts) { const q = merged(o, opts), s = q.size || size; m.setIcon(L.divIcon({ className: "", html: htmlOf({ ...q, size: s }), iconSize: [s, s], iconAnchor: [s / 2, s / 2] })); m.__z = opts.z || o.z || 10; m.setZIndexOffset(m.__z * 10); }, move(lat, lng) { m.setLatLng([lat, lng]); }, remove() { layer.removeLayer(m); } };
       },
       polyline(coords, o) {
         o = o || {};
@@ -107,6 +125,7 @@
     }
     const api = {
       get kind() { return impl.kind; },
+      get raw() { return impl.raw; },   // 시험·점검용(확대 수준 바꾸기 등)
       marker(o) { const h = { inner: null, state: null, set(x) { h.state = x; h.inner && h.inner.set(x); }, move(lat, lng) { o.lat = lat; o.lng = lng; h.inner && h.inner.move && h.inner.move(lat, lng); }, remove() { h.inner && h.inner.remove(); ops = ops.filter((q) => q.h !== h); } }; const op = { t: "marker", o, h }; ops.push(op); run(op); return h; },
       polyline(c, o) { const h = { inner: null, setPath(nc) { op.c = nc; h.inner && h.inner.setPath && h.inner.setPath(nc); }, remove() { h.inner && h.inner.remove(); ops = ops.filter((q) => q.h !== h); } }; const op = { t: "polyline", c, o, h }; ops.push(op); run(op); return h; },
       fit(p) { ops = ops.filter((q) => q.t !== "fit" && q.t !== "center"); const op = { t: "fit", p }; ops.push(op); run(op); },
@@ -174,7 +193,11 @@
       opts = opts || {};
       if (!document.getElementById("sd-pin-style")) {
         const st = document.createElement("style"); st.id = "sd-pin-style";
-        st.textContent = ".sd-pin{border-radius:50%;color:#fff;font-weight:700;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.4);border:2px solid #fff;box-sizing:border-box;font-family:-apple-system,system-ui,sans-serif;cursor:pointer}"
+        st.textContent = ".sd-ico{border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-sizing:border-box;box-shadow:0 1px 4px rgba(0,0,0,.45);cursor:pointer;transition:transform .15s ease}"
+          + ".sd-ico.ring{box-shadow:0 0 0 3px rgba(255,255,255,.95),0 0 0 6px rgba(27,94,74,.55),0 2px 6px rgba(0,0,0,.4)}.sd-ico.dim{opacity:.55;filter:grayscale(.85)}"
+          + "[data-zb=mid] .sd-ico{transform:scale(.78)}[data-zb=far] .sd-ico{transform:scale(.56)}[data-zb=far] .sd-ico.ring{transform:scale(.75)}"
+          + "@media (prefers-reduced-motion: reduce){.sd-ico{transition:none}}"
+          + ".sd-pin{border-radius:50%;color:#fff;font-weight:700;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.4);border:2px solid #fff;box-sizing:border-box;font-family:-apple-system,system-ui,sans-serif;cursor:pointer}"
           + ".sd-badge{position:absolute;right:-7px;top:-7px;min-width:15px;height:15px;line-height:13px;border-radius:8px;background:#fff;border:1px solid currentColor;font:700 9.5px/13px -apple-system,'Apple SD Gothic Neo',system-ui,sans-serif;text-align:center;padding:0 1px;box-sizing:border-box;pointer-events:none}"
           + ".sd-wrap{position:relative}.sd-tip{display:none;position:absolute;left:50%;bottom:calc(100% + 10px);transform:translateX(-50%);background:#fff;color:#1d1d1b;border-radius:10px;padding:8px 11px;box-shadow:0 3px 14px rgba(0,0,0,.28);white-space:nowrap;font:13px/1.45 -apple-system,'Apple SD Gothic Neo',system-ui,sans-serif;text-align:left;pointer-events:none;z-index:10}"
           + ".sd-tip:after{content:'';position:absolute;left:50%;top:100%;margin-left:-7px;border:7px solid transparent;border-top-color:#fff}"
