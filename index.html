@@ -21,37 +21,44 @@
 </div>
 
 <div id="app" class="app hidden">
-  <header class="bar">
-    <div>
-      <div class="title" id="bar-title">방문표</div>
-      <div class="sub" id="bar-sub"></div>
+  <!-- 11-18 새 화면: 지도가 화면 전체 바탕, 위에 둥근 찾기 창, 오른쪽 동그란 지도 단추, 끌어 올리는 아래 패널, 맨 아래 떠 있는 메뉴 -->
+  <div class="map-wrap"><div id="map" class="map"></div></div>
+  <header class="topbar">
+    <div class="pill">
+      <span class="logo" aria-hidden="true">송달</span>
+      <input id="top-q" type="search" inputmode="search" autocomplete="off" placeholder="서류 번호·이름 찾기" aria-label="서류 번호·이름 찾기">
+      <button id="top-q-x" class="qx hidden" aria-label="찾기 지우기">✕</button>
+      <button class="round" id="btn-more" title="더보기" aria-label="더보기">⋯</button>
     </div>
-    <div class="bar-btns">
-      <button class="icon" id="btn-list" title="목록">목록</button>
-      <button class="icon" id="btn-more" title="더보기" aria-label="더보기">⋯</button>
-    </div>
+    <div class="chip-line"><span class="status"><b id="bar-title">방문표</b> <span id="bar-sub"></span></span></div>
     <div id="menu" class="menu hidden">
       <button id="btn-play">▶ 순서대로 경로보기</button>
-      <button id="btn-fit">전체 경로 보기</button>
       <button id="btn-maptype">위성 지도</button>
+      <button id="btn-fit2" class="small-only">전체 경로 보기</button>
       <button id="btn-send">오늘 결과 맥으로 보내기</button>
       <button id="btn-reload">↻ 새로 받기</button>
       <button id="btn-reset" class="danger">오늘 기록 모두 지우기…</button>
       <div id="menu-info" class="menu-info"></div>
     </div>
   </header>
-  <div class="map-wrap"><div id="map" class="map"></div>
-    <div class="map-btns"><button id="map-next">다음 곳</button><button id="map-me">내 위치</button></div>
-    <div id="note" class="note hidden"></div></div>
+  <div class="map-btns bottom"><button class="round" id="btn-fit" title="전체 경로 보기" aria-label="전체 경로 보기">전체</button><button class="round" id="map-next" title="다음 곳으로 지도 이동" aria-label="다음 곳">다음</button><button class="round" id="map-me" title="내 위치" aria-label="내 위치">◎</button></div>
+  <div id="note" class="note hidden"></div>
   <div id="recalc" class="recalc hidden"></div>
   <div id="send" class="recalc hidden"></div>
 
   <section id="sheet" class="sheet">
-    <button class="handle" id="handle" aria-label="카드 접기/펼치기"><span></span></button>
+    <button class="handle" id="handle" aria-label="패널 접기/펼치기 (끌어서 높이 바꾸기)"><span></span></button>
     <div id="sync-status" class="sync"></div>
     <div id="next" class="next"></div>
     <div id="list" class="list hidden"></div>
   </section>
+  <div class="sheet-foot" aria-hidden="true"></div>
+  <nav class="dock" aria-label="메뉴">
+    <button id="btn-card" class="on"><i>▤</i><span>카드</span></button>
+    <button id="btn-list"><i>☰</i><span>목록</span></button>
+    <button id="btn-dock-recalc"><i>🔄</i><span>재계산</span></button>
+    <button id="btn-dock-undo"><i>↶</i><span>되돌리기</span></button>
+  </nav>
 </div>
 <script src="map.js"></script>
 <script src="app.js"></script>
