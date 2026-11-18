@@ -337,3 +337,6 @@ body.note-on .map-btns.bottom { bottom: calc(var(--foot) + var(--sheet-h) + 66px
 body.note-on .app.listing .sheet.listing .list { padding-bottom: 64px; }
 body.note-on.reo-bar-on .app.listing #note { bottom: calc(var(--foot) + 76px); }
 #note .note-btn { min-height: 44px; padding: 0 16px; font-size: 14px; }   /* 알림의 [되돌리기]·[다시 하기]도 손가락 크기 */
+/* 11-19 사용자 신고: 핀을 눌렀을 때 '맥으로 자동 저장됨' 글씨 윗부분이 회색 바(위에 붙어 있는 흰 띠) 뒤로 잘림 → 위로 당기던 여백을 없앰 */
+.sync { margin: 0 0 6px; line-height: 1.45; padding-top: 1px; }
+.rc-end { margin: 6px 0 2px; }
