@@ -298,3 +298,42 @@ body.note-on .map-btns.bottom { bottom: calc(var(--foot) + var(--sheet-h) + 66px
 .list .item.reo .t .ra { display: block; font-size: 12.5px; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sheet .next .act .actions3 button { min-height: 44px; }
 .lateb { white-space: nowrap; }   /* '퇴근 기 / 한 넘김'처럼 단어 중간에서 줄이 끊기지 않게 (11-18 GPT 건의) */
+/* 다시 방문 창: 넣을 자리 고르기 (11-18 사용자 요청) */
+.rv-slots { display: flex; gap: 6px; margin: 12px 0 2px; flex-wrap: wrap; }
+.rv-slots .slot { flex: 1 1 0; min-height: 44px; padding: 8px 6px; font-size: 14px; background: #fff; color: var(--g); border: 1.5px solid #cfd8d3; white-space: nowrap; }
+.rv-slots .slot.on { background: var(--g); color: #fff; border-color: var(--g); font-weight: 700; }
+/* 순서 편집 (11-18 밤, 애플 뮤직 재생 목록 편집처럼) — 위 [✕] [↶↷] [✓], 줄: ○ 고르기 · 번호 · 이름 · ≡ 손잡이(오른쪽) */
+.reo-head { position: sticky; top: -1px; z-index: 6; background: #fff; display: flex; align-items: center; gap: 8px; padding: 6px 0 10px; margin-top: -4px; }
+.reo-head .reo-tt { flex: 1; min-width: 0; } .reo-head .reo-tt b { font-size: 16px; } .reo-head .reo-tt small { display: block; color: var(--mute); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reo-head button { min-height: 44px; padding: 0; flex: none; }
+.reo-head .reo-x { width: 44px; border-radius: 50%; background: #eeeee9; color: var(--ink); font-size: 18px; border: 0; }
+.reo-head .reo-ok { width: 44px; border-radius: 50%; background: var(--g); color: #fff; font-size: 20px; font-weight: 700; border: 0; }
+.reo-head .reo-ur { display: flex; background: #eeeee9; border-radius: 22px; padding: 0 4px; }
+.reo-head .reo-ur button { width: 40px; background: transparent; color: var(--ink); border: 0; font-size: 19px; } .reo-head .reo-ur button:disabled { opacity: .35; }
+.list .item.reo { gap: 6px; padding-left: 0; padding-right: 0; }
+.list .item.reo .pick { flex: none; width: 44px; min-height: 44px; padding: 0; background: transparent; border: 0; display: flex; align-items: center; justify-content: center; }
+.list .item.reo .pick span { width: 22px; height: 22px; border-radius: 50%; border: 2px solid #b9b9b3; box-sizing: border-box; }
+.list .item.reo.sel .pick span { background: var(--g); border-color: var(--g); box-shadow: inset 0 0 0 3px #fff; }
+.list .item.reo.sel { background: #eef6f2; }
+.list .item.reo .handle { order: 10; margin-left: auto; color: #9a9a94; font-size: 24px; }
+.list .item.reo.dragging { transform-origin: center; box-shadow: 0 10px 24px rgba(0,0,0,.22); border-radius: 10px; }
+.list.dragging-on .item.reo:not(.dragging) { transition: transform .18s ease; }
+.reo-bar { position: sticky; bottom: 0; z-index: 6; display: flex; align-items: center; gap: 8px; background: #fff; padding: 10px 0 6px; box-shadow: 0 -8px 10px -8px rgba(0,0,0,.18); }
+.reo-bar span { flex: 1; font-size: 14px; font-weight: 600; } .reo-bar button { min-height: 44px; padding: 0 14px; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .list.dragging-on .item.reo:not(.dragging) { transition: none; } }
+.list .item.reo .handle { background: transparent; }
+/* 11-19 GPT 건의 ② 카드 이름 아래 한 줄 요약: '예상 23:09 도착 · 퇴근 기한 초과' (긴 빨간 칩 대신, 작은 아이폰에서도 예상 도착이 보이게).
+   접은 카드는 늦을 때만 보임. 아침 계획·몇 분 늦음·계산 기준은 아래 상세 칸 그대로 */
+.next .name .eta-line { display: block; margin-top: 3px; font-size: 14px; font-weight: 500; color: var(--mute); line-height: 1.35; }
+.next .name .eta-line .ea { white-space: nowrap; } .next .name .eta-line .ea b { color: var(--ink); }
+.next .name .eta-line .lateb { color: #a8430a; } .next .name .eta-line .lateb.strict { color: #b42318; }
+.sheet.collapsed .next .name .eta-line:not(.late) { display: none; }
+.sheet.collapsed .next .name .eta-line { font-size: 13px; }
+.mini-line .mt small .lateb { color: #a8430a; } .mini-line .mt small .lateb.strict { color: #b42318; }
+.mini-line .mt small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 11-19 GPT 건의 ① 목록을 펼치면 패널이 위 알림을 덮어서 [되돌리기]가 안 보였음 → 목록일 때 알림은 아래 메뉴 바로 위(엄지 자리), 패널보다 앞.
+   목록 마지막 줄이 알림 뒤에 숨지 않게 아래 여백, 순서 편집의 고르기 막대가 있으면 그 위로 */
+.app.listing #note { top: auto; right: 12px; bottom: calc(var(--foot) + 8px); z-index: 1460; }
+body.note-on .app.listing .sheet.listing .list { padding-bottom: 64px; }
+body.note-on.reo-bar-on .app.listing #note { bottom: calc(var(--foot) + 76px); }
+#note .note-btn { min-height: 44px; padding: 0 16px; font-size: 14px; }   /* 알림의 [되돌리기]·[다시 하기]도 손가락 크기 */
