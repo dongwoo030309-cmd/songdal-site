@@ -274,3 +274,27 @@ body.note-on .map-btns.bottom { bottom: calc(var(--foot) + var(--sheet-h) + 66px
 /* 작은 화면(높이 760 미만): 오른쪽 지도 단추가 위 찾기 창과 겹치지 않게 '전체'는 ⋯ 메뉴로 */
 .menu .small-only { display: none; }
 @media (max-height: 760px) { .map-btns.bottom #btn-fit { display: none; } .menu .small-only { display: block; } }
+
+/* 11-18 지도 크게 보기: 패널을 끝까지 내리면 손잡이 + 한 줄(다음 곳)만. 그 줄이나 손잡이를 누르거나 위로 끌면 다시 펼침 */
+.mini-line { display: none; }
+.sheet.mini { height: auto !important; max-height: none !important; overflow: hidden; }
+.sheet.mini .next > *:not(.mini-line), .sheet.mini .list, .sheet.mini .sync { display: none !important; }
+.sheet.mini .next .mini-line { display: flex; align-items: center; gap: 10px; width: 100%; background: none; color: var(--ink); padding: 2px 2px 10px; border-radius: 0; text-align: left; }
+.mini-line .mn { flex: none; min-width: 36px; height: 36px; padding: 0 6px; border-radius: 10px; background: var(--g); color: #fff; font-size: 18px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+.mini-line .mt { flex: 1; min-width: 0; } .mini-line .mt b { display: block; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini-line .mt small { display: block; font-size: 12px; color: var(--mute); font-weight: 500; } .mini-line .mu { flex: none; color: #9a9a94; font-size: 14px; }
+.sheet.mini .next > .done-msg { display: block !important; padding: 6px 0 10px; font-size: 15px; }
+.sheet.mini .done-sum, .sheet.mini .again-btn, .sheet.mini .undo-line { display: none !important; }
+
+/* 11-18 끌기: 끄는 동안은 움직임 효과 없이 손가락을 바로 따라옴, 손잡이·한 줄은 화면 스크롤 대신 끌기로 */
+.sheet.dragging { transition: none !important; user-select: none; -webkit-user-select: none; }
+.sheet.dragging .next .act { pointer-events: none; }
+#handle, .mini-line { touch-action: none; }
+.handle { padding: 12px 0 14px; }   /* 손가락으로 잡기 쉽게 조금 더 두껍게 */
+/* 목록(맨 위까지 올린 상태)은 찾기 창 아래까지 — 위 규칙(.app.listing .sheet 절반 높이)보다 우선 */
+.app.listing .sheet.listing { max-height: calc(100% - var(--foot) - var(--top-h) - env(safe-area-inset-top) - 10px); height: calc(100% - var(--foot) - var(--top-h) - env(safe-area-inset-top) - 10px); }
+
+/* 11-18 GPT 건의: 순서 바꾸기 줄에 짧은 주소 한 줄, [부재][주소 문제][순서 미루기] 누르는 높이 44px ([전달 완료] 자리는 그대로 — 버튼 묶음이 아래에 붙어 있음) */
+.list .item.reo .t .ra { display: block; font-size: 12.5px; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sheet .next .act .actions3 button { min-height: 44px; }
+.lateb { white-space: nowrap; }   /* '퇴근 기 / 한 넘김'처럼 단어 중간에서 줄이 끊기지 않게 (11-18 GPT 건의) */
