@@ -30,6 +30,12 @@
     const nm = window.naver.maps;
     const map = new nm.Map(el, { center: new nm.LatLng(36.50, 127.26), zoom: 12, mapDataControl: false, logoControlOptions: { position: nm.Position.BOTTOM_LEFT }, zoomControl: !window.SONGDAL_NO_ZOOM });
     const items = [];
+    /* 위성(겹쳐보기)에서 산의 등산로 선(overlayType 'ar')을 뺌 — 사용자 요청(11-18). 기본 겹쳐보기는 'ar.bg.ol.sw.lko'.
+       나머지(배경·도로·지하철·한국어 이름)는 그대로. 안 되면 기본 겹쳐보기를 씀. */
+    try {
+      const S = nm.NaverStyleMapTypeOptions;
+      if (S && S.getHybridMap && map.mapTypes) map.mapTypes.set(nm.MapTypeId.HYBRID, S.getHybridMap({ overlayType: "bg.ol.sw.lko" }));
+    } catch (e) {}
     return {
       kind: "naver", raw: map,
       marker(o) {
