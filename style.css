@@ -168,3 +168,17 @@ body.note-on .map-btns { bottom: 52px; }
 .rv-info { margin: 12px 0 6px; font-size: 15px; } .rv-cond { margin: 6px 0; padding: 8px 10px; border-radius: 10px; background: #eef4fb; color: #1f4f85; font-size: 14px; }
 .rv-cond.late { background: #fde3e0; color: #8a2a23; } .rc-card .actions { margin-top: 12px; }
 button.ghost.warn { color: #a4312a; border-color: #d9a39e; }
+
+/* 11-17: 시간 지남 표시(이름 아래, 접어도 보임) · 재계산 미리보기의 제시간이 되는 곳 */
+.next .name .late-chip { display: block; width: fit-content; margin-top: 4px; padding: 3px 8px; border-radius: 8px; background: #fff1e6; color: #a8430a; font-size: 13px; font-weight: 700; }
+.rc-fix { margin: 8px 0; font-size: 14px; line-height: 1.45; } .rc-fix .h { font-size: 12px; color: var(--mute); margin-top: 6px; }
+.rc-fix .ok { color: #1b5e4a; } .rc-fix .bad { color: #a8430a; }
+.rc-chips .chip.moved { text-decoration: underline; text-underline-offset: 2px; }
+/* 내용이 길어도 [이 순서로 바꾸기]/[그대로 두기]는 창 아래에 늘 보이게 */
+.rc-card > .actions { position: sticky; bottom: calc(-1 * (env(safe-area-inset-bottom) + 14px)); background: #fff; padding: 10px 0 calc(env(safe-area-inset-bottom) + 14px); margin-bottom: calc(-1 * (env(safe-area-inset-bottom) + 14px)); box-shadow: 0 -8px 10px -8px rgba(0,0,0,.15); }
+/* 11-17 GPT 검토: 재계산 번호 대비(흰 글씨 4.5:1 이상), 완료 줄은 취소선 대신 회색 번호·결과 배지로 */
+.rc-chips .chip { font-size: 14px; } .rc-chips .chip.moved { background: #c2410c; }
+.list .item.done .t { text-decoration: none; }
+/* 11-18 직접 정한 시간: 폴더 규칙(오늘 중 허용)과 구분해서 빨강 */
+.next .name .late-chip.strict { background: #fde3e0; color: #8a2a23; }
+.lateb.strict { color: #b3261e; } .tag.custom { background: #fde7e4; color: #9a2b1f; border: 1px solid #f1b8b0; }
