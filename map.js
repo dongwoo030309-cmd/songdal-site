@@ -1,6 +1,9 @@
 /* 지도 공통 모듈. 네이버 Web Dynamic Map 을 먼저 시도하고, 못 쓰면 OpenStreetMap(Leaflet) 으로 대체.
    사용: SongdalMap.create(element, {clientId}).then(map => { map.marker(...); map.polyline(...); map.fit(); }) */
 (function () {
+  /* 화면 위에 떠 있는 것(아이폰의 검색창·아래 패널)에 가리지 않게 지도 맞춤 여백을 페이지가 알려 줄 수 있음: window.SONGDAL_MAP_PAD() → {top,right,bottom,left} */
+  const pad = () => { const d = { top: 40, right: 40, bottom: 40, left: 40 }; try { const p = window.SONGDAL_MAP_PAD && window.SONGDAL_MAP_PAD(); return p ? { ...d, ...p } : d; } catch (e) { return d; } };
+  const shift = () => { const p = pad(); return Math.round((p.bottom - p.top) / 2); };   // 보이는 영역 가운데로 옮길 픽셀
   const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
   const LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
 
@@ -25,7 +28,7 @@
 
   function naverMap(el) {
     const nm = window.naver.maps;
-    const map = new nm.Map(el, { center: new nm.LatLng(36.50, 127.26), zoom: 12, mapDataControl: false, logoControlOptions: { position: nm.Position.BOTTOM_LEFT } });
+    const map = new nm.Map(el, { center: new nm.LatLng(36.50, 127.26), zoom: 12, mapDataControl: false, logoControlOptions: { position: nm.Position.BOTTOM_LEFT }, zoomControl: !window.SONGDAL_NO_ZOOM });
     const items = [];
     return {
       kind: "naver", raw: map,
@@ -48,9 +51,9 @@
         if (!points.length) return;
         const b = new nm.LatLngBounds(new nm.LatLng(points[0][0], points[0][1]), new nm.LatLng(points[0][0], points[0][1]));
         points.forEach(p => b.extend(new nm.LatLng(p[0], p[1])));
-        map.fitBounds(b, { top: 40, right: 40, bottom: 40, left: 40 });
+        map.fitBounds(b, pad());
       },
-      center(lat, lng, zoom) { map.setCenter(new nm.LatLng(lat, lng)); if (zoom) map.setZoom(zoom); },
+      center(lat, lng, zoom) { map.setCenter(new nm.LatLng(lat, lng)); if (zoom) map.setZoom(zoom); const s = shift(); if (s) map.panBy(new nm.Point(0, s)); },
       clear() { items.forEach(i => i.setMap(null)); items.length = 0; },
       resize() { nm.Event.trigger(map, "resize"); },
       setType(t) { map.setMapTypeId(t === "satellite" ? nm.MapTypeId.HYBRID : nm.MapTypeId.NORMAL); },
@@ -60,7 +63,7 @@
   async function leafletMap(el) {
     loadCss(LEAFLET_CSS);
     if (!window.L) await loadScript(LEAFLET_JS);
-    const map = L.map(el, { zoomControl: true }).setView([36.50, 127.26], 12);
+    const map = L.map(el, { zoomControl: !window.SONGDAL_NO_ZOOM }).setView([36.50, 127.26], 12);
     const street = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
     const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagery © Esri" });
     const layer = L.layerGroup().addTo(map);
@@ -78,8 +81,8 @@
         const p = L.polyline(coords, { color: o.color || "#1b5e4a", weight: o.weight || 4, opacity: o.opacity ?? 0.85, dashArray: o.dashed ? "6 8" : null }).addTo(layer);
         return { setPath(c) { p.setLatLngs(c); }, remove() { layer.removeLayer(p); } };
       },
-      fit(points) { if (points.length) map.fitBounds(points, { padding: [40, 40] }); },
-      center(lat, lng, zoom) { map.setView([lat, lng], zoom || map.getZoom()); },
+      fit(points) { if (!points.length) return; const p = pad(); map.fitBounds(points, { paddingTopLeft: [p.left, p.top], paddingBottomRight: [p.right, p.bottom] }); },
+      center(lat, lng, zoom) { map.setView([lat, lng], zoom || map.getZoom(), { animate: false }); const s = shift(); if (s) map.panBy([0, s], { animate: false }); },
       clear() { layer.clearLayers(); },
       resize() { map.invalidateSize(); },
       setType(t) { if (t === "satellite") { map.removeLayer(street); sat.addTo(map); } else { map.removeLayer(sat); street.addTo(map); } layer.bringToFront && layer.bringToFront(); },
