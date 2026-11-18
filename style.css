@@ -182,3 +182,95 @@ button.ghost.warn { color: #a4312a; border-color: #d9a39e; }
 /* 11-18 직접 정한 시간: 폴더 규칙(오늘 중 허용)과 구분해서 빨강 */
 .next .name .late-chip.strict { background: #fde3e0; color: #8a2a23; }
 .lateb.strict { color: #b3261e; } .tag.custom { background: #fde7e4; color: #9a2b1f; border: 1px solid #f1b8b0; }
+/* 11-18 남은 순서 바꾸기 */
+.list .sum .reo-on { margin-left: 6px; padding: 6px 10px; font-size: 13px; min-height: 36px; }
+.reo-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0 10px; }
+.reo-head small { display: block; color: var(--mute); font-size: 12px; } .reo-head button { min-height: 44px; padding: 0 16px; white-space: nowrap; flex: none; }
+.list .item.reo { display: flex; align-items: center; gap: 8px; touch-action: pan-y; background: #fff; position: relative; transition: transform .15s ease; }
+.list .item.reo.dragging { transition: none; z-index: 5; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+.list .item.reo .handle { flex: none; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; font-size: 22px; color: #8a8a84; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
+.list .item.reo .t { flex: 1; min-width: 0; }
+.list .item.reo .mv { flex: none; display: flex; gap: 4px; } .list .item.reo .mv button { width: 44px; height: 44px; padding: 0; font-size: 16px; }
+@media (prefers-reduced-motion: reduce) { .list .item.reo { transition: none; } }
+
+/* ===================== 11-18 새 화면 (4단계) =====================
+   지도 = 화면 전체 바탕 · 위에 둥근 찾기 창 · 오른쪽 동그란 지도 단추 · 끌어 올리는 둥근 아래 패널 · 맨 아래 떠 있는 둥근 메뉴.
+   기록 단추([전달 완료] 등)는 늘 메뉴 바로 위 같은 자리 — 움직임 때문에 자리가 바뀌거나 늦어지지 않게 패널 높이 변화에만 움직임을 씀. */
+:root { --foot: calc(env(safe-area-inset-bottom) + 78px); --sheet-h: 280px; --top-h: 104px; --ease: cubic-bezier(.2, .8, .2, 1); }
+html, body { overflow: hidden; }
+.app { position: fixed; inset: 0; display: block; height: auto; }
+.map-wrap, .app.listing .map-wrap { position: absolute; inset: 0; min-height: 0; display: block; flex: none; }
+.map-wrap .map, .app.listing .map-wrap .map, .app.listing .map { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; flex: none; }
+
+.topbar { position: fixed; top: calc(env(safe-area-inset-top) + 8px); left: 12px; right: 12px; z-index: 1500; color: var(--ink); pointer-events: none; }
+.topbar > * { pointer-events: auto; } .topbar .chip-line { pointer-events: none; } .topbar .chip-line .status { pointer-events: auto; }
+.topbar .pill { display: flex; align-items: center; gap: 8px; height: 50px; padding: 0 5px 0 7px; background: #fff; border-radius: 25px; box-shadow: 0 2px 14px rgba(0,0,0,.2); }
+.topbar .logo { flex: none; width: 36px; height: 36px; border-radius: 50%; background: var(--g); color: #fff; font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; letter-spacing: -.5px; }
+.topbar input { flex: 1; min-width: 0; border: 0; outline: 0; font: inherit; font-size: 16px; background: transparent; padding: 0 2px; color: var(--ink); -webkit-appearance: none; appearance: none; }   /* 16px: 아이폰이 글씨를 누를 때 확대하지 않게 */
+.topbar input::-webkit-search-cancel-button { display: none; }
+.topbar .qx { flex: none; width: 34px; height: 34px; padding: 0; border-radius: 50%; background: #ececea; color: #555; font-size: 14px; }
+.round { width: 46px; height: 46px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: #fff; color: var(--g); border: 0; box-shadow: 0 2px 10px rgba(0,0,0,.22); font-size: 13px; font-weight: 700; }
+.round:active { transform: scale(.94); }
+.topbar .pill .round { box-shadow: none; background: var(--g); color: #fff; font-size: 20px; width: 40px; height: 40px; flex: none; }
+.chip-line { margin-top: 8px; display: flex; }
+.chip-line .status { background: rgba(255,255,255,.96); border-radius: 16px; padding: 6px 12px; font-size: 13px; box-shadow: 0 1px 8px rgba(0,0,0,.16); max-width: calc(100% - 60px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip-line .status b { color: var(--g); margin-right: 2px; }
+.topbar .menu { position: absolute; right: 0; top: 56px; }
+
+.map-btns, body.note-on .map-btns { position: fixed; right: 12px; z-index: 1200; display: flex; flex-direction: column; gap: 10px; }
+.map-btns.top { top: calc(env(safe-area-inset-top) + 112px); bottom: auto; }
+.map-btns.bottom { bottom: calc(var(--foot) + var(--sheet-h) + 14px); transition: opacity .2s; }
+body.note-on .map-btns.bottom { bottom: calc(var(--foot) + var(--sheet-h) + 66px); }
+.map-btns .round { padding: 0; min-height: 0; border: 0; }
+.app.listing .map-btns.bottom { opacity: 0; pointer-events: none; }   /* 목록을 크게 펼치면 가려지니 숨김 */
+
+#note, .map-wrap #note { position: fixed; left: 12px; right: 12px; bottom: calc(var(--foot) + var(--sheet-h) + 12px); z-index: 1300; border-radius: 14px; min-height: 44px; padding: 8px 12px; box-shadow: 0 4px 16px rgba(0,0,0,.18); }
+
+.sheet, .app.listing .sheet { position: fixed; left: 0; right: 0; bottom: var(--foot); z-index: 1400; flex: none;
+  max-height: min(60vh, calc(100% - var(--foot) - var(--top-h) - env(safe-area-inset-top) - 10px));
+  border-radius: 22px 22px 0 0; box-shadow: 0 -6px 24px rgba(0,0,0,.16); padding: 2px 16px 8px; }
+.sheet.listing { max-height: calc(100% - var(--foot) - var(--top-h) - env(safe-area-inset-top) - 10px); }
+.sheet.collapsed { max-height: min(60vh, calc(100% - var(--foot) - var(--top-h) - env(safe-area-inset-top) - 10px)); }
+.sheet.anim { transition: transform .26s var(--ease); }
+.handle { padding: 9px 0 12px; top: -2px; }
+.sheet-foot { position: fixed; left: 0; right: 0; bottom: 0; height: var(--foot); background: #fff; z-index: 1399; }
+.next .act { bottom: -8px; margin: 6px -16px 0; padding: 8px 16px 8px; }
+.sheet.collapsed .next .act { padding-bottom: 8px; }
+
+.dock { position: fixed; left: 14px; right: 14px; bottom: calc(env(safe-area-inset-bottom) + 10px); height: 58px; z-index: 1450; display: flex; gap: 4px; padding: 5px;
+  background: rgba(255,255,255,.98); border-radius: 29px; box-shadow: 0 4px 20px rgba(0,0,0,.2); border: 1px solid #ecece8; }
+.dock button { flex: 1; min-width: 0; background: transparent; color: #55554f; border-radius: 24px; padding: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 12px; font-weight: 700; transition: background .2s, color .2s; }
+.dock button i { font-style: normal; font-size: 17px; line-height: 1; }
+.dock button.on { background: var(--g2); color: var(--g); }
+.dock button:disabled { opacity: .35; }
+.dock button:active { background: #e4ebe7; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet.anim, .map-btns.bottom, .dock button, .round:active { transition: none !important; transform: none !important; }
+}
+/* 11-18 조정: 카드 패널은 화면 절반 이하(지도가 더 보이게), 지도 단추는 오른쪽 아래 한 줄, 알림은 위 찾기 창 아래(단추를 가리지 않게) */
+.sheet, .app.listing .sheet, .sheet.collapsed { max-height: min(50vh, calc(100% - var(--foot) - var(--top-h) - env(safe-area-inset-top) - 10px)); }
+.sheet.listing { max-height: calc(100% - var(--foot) - var(--top-h) - env(safe-area-inset-top) - 10px); }
+.map-btns.bottom, body.note-on .map-btns.bottom { bottom: calc(var(--foot) + var(--sheet-h) + 12px); gap: 8px; }
+.map-btns .round { width: 44px; height: 44px; }
+#note, .map-wrap #note { top: calc(env(safe-area-inset-top) + 100px); bottom: auto; right: 66px; }
+/* 11-18 기록 단추 자리 고정: 카드 패널은 늘 같은 높이, 버튼 묶음(.act)은 패널 맨 아래(내용이 짧으면 아래로 밀고, 길면 아래에 붙어 있음).
+   접은 카드도 버튼 묶음이 맨 아래라 [전달 완료]가 늘 메뉴 바로 위 같은 자리 */
+.sheet { display: flex; flex-direction: column; }
+.sheet > * { flex: none; }
+.sheet .next { flex: 1 0 auto; display: flex; flex-direction: column; }
+.sheet .next > * { flex: none; }
+.sheet .next .act { order: 10; margin-top: auto; }
+.sheet .next .more-info { order: 5; }
+.sheet:not(.collapsed):not(.listing) { height: min(50vh, calc(100% - var(--foot) - var(--top-h) - env(safe-area-inset-top) - 10px)); }
+.sheet.listing .next { display: none; }
+/* [길안내][전달 완료]를 맨 아래 줄(엄지에 가장 가까움), [부재][주소 문제][순서 미루기]는 그 위 — 접어서 위 줄이 숨어도 [전달 완료] 자리는 그대로 */
+.sheet { padding-bottom: 0; }
+.sheet .next .act { bottom: 0; display: flex; flex-direction: column; gap: 8px; padding: 8px 16px 10px; }
+.sheet .next .act .actions3 { order: 1; margin: 0; } .sheet .next .act .actions { order: 2; margin: 0; }
+.sheet.collapsed .next .act { padding-bottom: 10px; }
+/* 작은 아이폰(667 높이)에서도 출입 비번·주소가 버튼 뒤로 숨지 않게 카드는 최소 400px */
+.sheet:not(.collapsed):not(.listing) { height: min(max(50vh, 400px), calc(100% - var(--foot) - var(--top-h) - env(safe-area-inset-top) - 10px)); max-height: none; }
+/* 작은 화면(높이 760 미만): 오른쪽 지도 단추가 위 찾기 창과 겹치지 않게 '전체'는 ⋯ 메뉴로 */
+.menu .small-only { display: none; }
+@media (max-height: 760px) { .map-btns.bottom #btn-fit { display: none; } .menu .small-only { display: block; } }
