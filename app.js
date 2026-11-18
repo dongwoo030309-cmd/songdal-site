@@ -2,6 +2,25 @@
 const $ = (id) => document.getElementById(id);
 const CFG = window.SONGDAL_CONFIG || {};
 const LOCAL = new URLSearchParams(location.search).get("local") === "1";
+/* 11-18 새 화면: 지도는 화면 전체 바탕이라, 맞출 때 위 찾기 창·아래 패널에 가리지 않게 여백을 알려 줌(map.js). 확대·축소는 손가락으로 */
+window.SONGDAL_NO_ZOOM = true;
+window.SONGDAL_MAP_PAD = () => {
+  const top = document.querySelector(".topbar"), sh = $("sheet"), foot = document.querySelector(".sheet-foot");
+  return { top: (top ? top.offsetTop + top.offsetHeight : 100) + 14, right: 66, left: 24,
+           bottom: (sh && !sh.classList.contains("hidden") ? sh.offsetHeight : 0) + (foot ? foot.offsetHeight : 80) + 18 };
+};
+const reduceMotion = () => !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+/* 패널 높이가 바뀌는 조작(카드·목록·접기)만 부드럽게: 바뀌기 전 위치에서 새 위치로 미끄러지듯. 기록 단추는 패널 안에서 자리가 그대로 */
+function animateSheet(fn) {
+  const sh = $("sheet"), t0 = sh.getBoundingClientRect().top;
+  fn();
+  if (reduceMotion()) return;
+  const d = t0 - sh.getBoundingClientRect().top;
+  if (Math.abs(d) < 2) return;
+  sh.classList.remove("anim"); sh.style.transform = `translateY(${d}px)`; void sh.offsetHeight;
+  sh.classList.add("anim"); sh.style.transform = "";
+  clearTimeout(animateSheet.t); animateSheet.t = setTimeout(() => sh.classList.remove("anim"), 320);
+}
 const S = { plan: null, map: null, markers: {}, lines: [], order: [], done: {}, showList: false, selected: null, fallbackNote: "" };
 const RULE_CLASS = { "오전": "morning", "주간": "day", "야간": "night", "휴일": "holiday" };
 const RULE_COLOR = (r) => r === "야간" ? "#5b4bb5" : r === "오전" ? "#c2640f" : r === "휴일" ? "#a23b72" : "#1b5e4a";
@@ -90,12 +109,12 @@ function planRevisit(i) {
 /* 다시 방문 확인 창: 넣을 자리·예상 도착·시간 조건을 먼저 보여 주고, 주소 문제였던 곳은 주소를 확인했는지 물음 */
 function askRevisit(i) {
   const st = stopOf(i), rk = resultOf(i), pr = planRevisit(i), box = $("recalc"), r = pr.row;
-  const win = st.rule === "아무때나" ? "" : `${st.rule} ${hhmm(st.window[0])}–${hhmm(st.window[1])}`;
+  const win = st.custom ? `직접 정한 시간(${st.custom})` : st.rule === "아무때나" ? "" : `${st.rule} ${hhmm(st.window[0])}–${hhmm(st.window[1])}`;
   box.innerHTML = `<div class="rc-card">
     <div class="rc-title">서류 ${docNumber(i)}번 다시 방문</div>
     <div class="basis">${esc(st.label || st.place || "")} · 앞선 방문: ${RESULTS[rk]} ${hhmm(S.done[i])}</div>
     <div class="rv-info">남은 순서 <b>${pr.pos}번째</b>에 넣어요${r ? ` · 예상 <b>${hhmm(r.arrive)}</b> 도착${r.wait > 60 ? ` (${hhmm(r.begin)}부터 송달)` : ""}` : ""}</div>
-    ${win ? `<div class="rv-cond${!r || r.late ? " late" : ""}">${!r ? `⚠ 예상 시각을 계산하지 못했어요 (${esc(win)} 조건 확인 필요)` : r.late ? (r.miss ? `⚠ 이 자리에 넣으면 ${esc(win)} 조건을 넘겨요 (<b>오늘 중 방문</b>)` : `⚠ ${esc(win)} 조건이 지나서 <b>오늘 중 방문</b>으로 들어가요`) : `${esc(win)} 조건 안에 갈 수 있어요`}</div>` : ""}
+    ${win ? `<div class="rv-cond${!r || r.late ? " late" : ""}">${!r ? `⚠ 예상 시각을 계산하지 못했어요 (${esc(win)} 조건 확인 필요)` : r.late && st.custom ? (r.miss ? `⛔ 이 자리에 넣으면 <b>${esc(win)}</b>을 못 지켜요` : `⛔ <b>${esc(win)}</b>이 이미 지났어요`) : r.late ? (r.miss ? `⚠ 이 자리에 넣으면 ${esc(win)} 조건을 넘겨요 (<b>오늘 중 방문</b>)` : `⚠ ${esc(win)} 조건이 지나서 <b>오늘 중 방문</b>으로 들어가요`) : `${esc(win)} 조건 안에 갈 수 있어요`}</div>` : ""}
     ${pr.ok ? "" : `<div class="rv-cond late">⚠ 다시 넣으면 퇴근 기한 안에 다 못 돌 수 있어요</div>`}
     ${rk === "addr" ? `<div class="rv-cond">주소 문제였던 곳이에요. 주소를 확인한 뒤에 다시 넣어 주세요.</div>` : ""}
     <div class="actions"><button class="ghost" id="rv-cancel">그만두기</button><button id="rv-go">${rk === "addr" ? "주소 확인했어요 · 넣기" : "다시 넣기"}</button></div></div>`;
@@ -359,22 +378,78 @@ function timesHtml(pl, e, base, isNext, direct) {
   return `<div class="times">${planLine}${liveLine}<div class="basis">기준: ${esc(base.label)}</div></div>`;
 }
 function navLink(st) { const app = encodeURIComponent(LOCAL ? "songdal" : location.origin + location.pathname); return `nmap://navigation?dlat=${st.lat}&dlng=${st.lng}&dname=${encodeURIComponent(st.place || st.label || "송달지")}&appname=${app}`; }
+/* ---------- 남은 순서 직접 바꾸기 (11-18, 3단계) ----------
+   목록의 '↕ 남은 순서 바꾸기' → 손잡이(☰)를 끌거나 ▲▼. 손잡이에서만 끌려서 목록 스크롤과 안 겹침.
+   서류 번호·기록은 곳에 붙어 있어서 그대로, 바꾸기 전 상태는 되돌리기(↶)로. 도착 시각은 바로 다시 계산돼 보임. */
+function moveRem(i, to) {
+  const rem = remaining(), k = rem.indexOf(i);
+  if (k < 0 || to < 0 || to >= rem.length || to === k) return;
+  snapshot(`서류 ${docNumber(i)}번 순서 바꾸기`);
+  rem.splice(k, 1); rem.splice(to, 0, i);
+  S.order = S.order.filter((x) => S.done[x]).concat(rem); S.selected = null; S.moved = i; saveDone(); render();
+}
+function renderReorder(box, etas) {
+  const rem = remaining();
+  const last = (S.history || [])[S.history.length - 1], canUndo = last && /순서 바꾸기/.test(last.label || "");
+  box.innerHTML = `<div class="reo-head"><div><b>남은 순서 바꾸기</b><small>☰ 끌기 또는 ▲▼ · 서류 번호는 그대로</small></div>${canUndo ? `<button class="ghost" id="reo-undo">${undoText()}</button>` : ""}<button id="reo-done">다 했어요</button></div>`;
+  $("reo-done").onclick = () => { S.reorder = false; S.moved = null; render(); };
+  if ($("reo-undo")) $("reo-undo").onclick = undo;
+  rem.forEach((i, k) => {
+    const st = stopOf(i), e = etas[i];
+    const div = document.createElement("div"); div.className = "item reo" + (S.moved === i ? " flash" : ""); div.dataset.i = String(i);
+    div.innerHTML = `<span class="handle" aria-label="끌어서 순서 바꾸기">☰</span><div class="n">${docNumber(i)}</div><div class="t"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b><small>${k + 1}번째${e ? ` · 도착 ${hhmm(e.arrive)}` : ""}${e && e.late ? (st.custom ? ` · <b class="lateb strict">⛔ 직접 ${esc(st.custom)} 못 지킴</b>` : ` · <b class="lateb">${e.miss ? `${esc(st.rule)} 넘김` : `${esc(st.rule)} 지남`}</b>`) : ""}</small></div>
+      <div class="mv"><button class="ghost up" ${k === 0 ? "disabled" : ""} aria-label="한 칸 앞으로">▲</button><button class="ghost dn" ${k === rem.length - 1 ? "disabled" : ""} aria-label="한 칸 뒤로">▼</button></div>`;
+    div.querySelector(".up").onclick = () => moveRem(i, k - 1);
+    div.querySelector(".dn").onclick = () => moveRem(i, k + 1);
+    dragHandle(div.querySelector(".handle"), div, box, i, k);
+    box.appendChild(div);
+  });
+  if (S.moved != null) { const row = box.querySelector(`.item[data-i="${S.moved}"]`); if (row) { row.scrollIntoView({ block: "nearest" }); setTimeout(() => row.classList.remove("flash"), 1500); } S.moved = null; }
+}
+function dragHandle(h, row, box, i, k) {
+  h.onpointerdown = (ev) => {
+    ev.preventDefault(); try { h.setPointerCapture(ev.pointerId); } catch (e) {}
+    const sheet = $("sheet"), rows = [...box.querySelectorAll(".item.reo")], s0 = sheet.scrollTop, y0 = ev.clientY;
+    const mids = rows.map((r) => { const b = r.getBoundingClientRect(); return b.top + b.height / 2; }), hh = row.offsetHeight + 6;
+    let to = k, timer = null, lastY = y0;
+    row.classList.add("dragging");
+    const update = () => {
+      const dy = lastY - y0 + (sheet.scrollTop - s0), c = mids[k] + dy;
+      to = rows.reduce((n, r, j) => n + (j !== k && mids[j] < c ? 1 : 0), 0);
+      row.style.transform = `translateY(${dy}px)`;
+      rows.forEach((r, j) => { if (j !== k) r.style.transform = k < to && j > k && j <= to ? `translateY(${-hh}px)` : k > to && j < k && j >= to ? `translateY(${hh}px)` : ""; });
+    };
+    const edge = () => {   // 화면 위·아래 끝에 가면 저절로 스크롤
+      const b = sheet.getBoundingClientRect(), d = lastY < b.top + 60 ? -10 : lastY > b.bottom - 60 ? 10 : 0;
+      if (d) { sheet.scrollTop += d; update(); }
+    };
+    timer = setInterval(edge, 30);
+    h.onpointermove = (e) => { lastY = e.clientY; update(); };
+    h.onpointerup = h.onpointercancel = () => {
+      clearInterval(timer); h.onpointermove = h.onpointerup = h.onpointercancel = null;
+      rows.forEach((r) => (r.style.transform = "")); row.classList.remove("dragging");
+      if (to !== k) moveRem(i, to);
+    };
+  };
+}
 function renderList(etas) {
   const box = $("list"); box.classList.toggle("hidden", !S.showList);
   const wasListing = $("app").classList.contains("listing");
   $("sheet").classList.toggle("listing", !!S.showList); $("app").classList.toggle("listing", !!S.showList);
   if (wasListing !== !!S.showList && S.map) setTimeout(() => { S.map.resize(); if (S.selected != null && S.order.includes(S.selected) && !S.done[S.selected]) fitLeg(S.selected); else followNext(); }, 60);
-  if (!S.animating) $("btn-list").textContent = S.showList ? "카드" : "목록";
-  if (!S.showList) return;
+  if (!S.animating) { $("btn-list").classList.toggle("on", !!S.showList); $("btn-card").classList.toggle("on", !S.showList); }
+  $("btn-dock-undo").disabled = !(S.history || []).length; $("btn-dock-recalc").disabled = remaining().length < 2;
+  if (!S.showList) { S.reorder = false; return; }
+  if (S.reorder) return renderReorder(box, etas);
   const rem = remaining(), cnt = resultCounts(), nAgain = cnt.absent + cnt.addr;
   const f = S.listFilter || "all";
   const chip = (key, label) => `<button class="fchip${f === key ? " on" : ""}" data-f="${key}">${label}</button>`;
-  box.innerHTML = `<div class="head"><input id="list-q" type="search" inputmode="search" autocomplete="off" placeholder="서류 번호·이름 찾기" value="${esc(S.listQ || "")}"></div>
+  box.innerHTML = `${S.listQ ? `<div class="hint q-note">'${esc(S.listQ)}' 찾는 중 · 위 찾기 창의 ✕ 로 지워요</div>` : ""}
     <div class="filters">${chip("all", `전체 ${S.order.length}`)}${chip("left", `남은 곳 ${rem.length}`)}${chip("again", `다시 갈 곳 ${nAgain}`)}</div>
-    <div class="sum">${esc(countsText(cnt))} · 남음 ${rem.length}</div>`;
+    <div class="sum">${esc(countsText(cnt))} · 남음 ${rem.length}${rem.length >= 2 ? ` <button class="ghost reo-on" id="reo-on">↕ 남은 순서 바꾸기</button>` : ""}</div>`;
+  if ($("reo-on")) $("reo-on").onclick = () => { S.reorder = true; S.ghost = null; render(); $("sheet").scrollTop = 0; };
   // 찾기: 숫자면 서류 번호가 그 숫자로 시작하는 곳, 글자면 이름·장소에 들어 있는 곳 (입력 중에 화면을 다시 그리지 않고 줄만 숨김)
   const applyQ = () => { const q = (S.listQ || "").trim().toLowerCase(); box.querySelectorAll(".item:not(.ghost-row)").forEach((el) => { el.style.display = !q || (/^\d+$/.test(q) ? el.dataset.doc.startsWith(q) : el.dataset.q.includes(q)) ? "" : "none"; }); };
-  $("list-q").oninput = (e) => { S.listQ = e.target.value; applyQ(); };
   box.querySelectorAll(".fchip").forEach((b) => (b.onclick = () => { S.listFilter = b.dataset.f; S.ghost = null; render(); $("sheet").scrollTop = 0; }));
   const shown = S.order.filter((i) => f === "all" || (f === "left" ? !S.done[i] : resultOf(i) && resultOf(i) !== "ok"));
   if (!shown.length && !S.ghost) box.insertAdjacentHTML("beforeend", `<div class="hint" style="padding:14px 0">${f === "left" ? "남은 곳이 없어요." : f === "again" ? "다시 갈 곳이 없어요." : "해당하는 곳이 없어요."}</div>`);
@@ -492,12 +567,12 @@ function fixList(pr) {
   const fixed = nx.filter((r) => !r.late && cur[r.i] && cur[r.i].miss);
   // 지금 순서가 퇴근 기한을 넘겨 중간에 계산이 끊겼으면 곳별 비교가 없음 → '새로/그래도'를 나누지 않고 새 순서에서 넘기는 곳만 보여 줌
   const known = !!(pr.cur.rows && pr.cur.rows.length);
-  const worse = known ? nx.filter((r) => r.miss && !(cur[r.i] && cur[r.i].miss)) : [];   // 지금 순서로는 제시간인데 새 순서에서 늦어지는 곳
-  const still = nx.filter((r) => r.miss && (!known || (cur[r.i] && cur[r.i].miss)));
+  const worse = known ? nx.filter((r) => r.miss && !r.strict && !(cur[r.i] && cur[r.i].miss)) : [];   // 지금 순서로는 제시간인데 새 순서에서 늦어지는 곳
+  const still = nx.filter((r) => r.miss && !r.strict && (!known || (cur[r.i] && cur[r.i].miss)));
   if (!fixed.length && !worse.length && !still.length && !nx.some((r) => r.strict)) return "";
   const sec = (title, cls, mark, rows, both) => rows.length ? `<div class="h">${title}</div>` + rows.map((r) => `<div class="${cls}">${mark} ${who(r.i)} · ${win(r.i)} · 도착 ${both && cur[r.i] ? `${hhmm(cur[r.i].arrive)} → ` : ""}<b>${hhmm(r.arrive)}</b></div>`).join("") : "";
-  const gone = nx.filter((r) => r.strict && !r.miss);   // 직접 정한 시간이 이미 지난 곳
-  return `<div class="rc-fix">${sec("직접 정한 시간이 이미 지난 곳", "bad", "⛔", gone, false)}${sec("제시간이 되는 곳", "ok", "✓", fixed, true)}${sec("새로 시간을 넘기는 곳 (오늘 중 방문)", "bad", "⚠", worse, true)}${sec(known ? "바꿔도 시간을 넘기는 곳 (오늘 중 방문)" : "새 순서에서 시간을 넘기는 곳 (오늘 중 방문)", "bad", "⚠", still, false)}</div>`;
+  const gone = nx.filter((r) => r.strict);   // 직접 정한 시간을 못 지키는 곳(이미 지났거나 이 순서로 놓침) — '오늘 중 방문'과 따로
+  return `<div class="rc-fix">${sec("직접 정한 시간을 못 지키는 곳", "bad", "⛔", gone, false)}${sec("제시간이 되는 곳", "ok", "✓", fixed, true)}${sec("새로 시간을 넘기는 곳 (오늘 중 방문)", "bad", "⚠", worse, true)}${sec(known ? "바꿔도 시간을 넘기는 곳 (오늘 중 방문)" : "새 순서에서 시간을 넘기는 곳 (오늘 중 방문)", "bad", "⚠", still, false)}</div>`;
 }
 async function openRecalc(useGps, ready) {
   const box = $("recalc"); box.classList.remove("hidden");
@@ -542,7 +617,7 @@ async function openRecalc(useGps, ready) {
 function stopAnimation(finished) {
   if (!S.animating) return;
   if (!finished && S.anim) S.anim.stop();
-  S.animating = false; $("btn-play").textContent = "▶ 순서대로 경로보기"; $("btn-list").textContent = "목록";
+  S.animating = false; $("btn-play").textContent = "▶ 순서대로 경로보기"; $("btn-list").innerHTML = "<i>☰</i><span>목록</span>";
   if (!finished) { render(); return; }
   toast("출발부터 끝까지 보여드렸어요"); setTimeout(() => { if (!S.animating) render(); }, 2500);
 }
@@ -551,7 +626,7 @@ function playRoute() {
   const seq = S.plan.end_mode === "last" ? [0, ...S.order] : [0, ...S.order, END];
   const legs = []; for (let k = 0; k < seq.length - 1; k++) { const { coords, real } = legCoords(seq[k], seq[k + 1]); const st = seq[k + 1] !== END ? stopOf(seq[k + 1]) : null; legs.push({ b: seq[k + 1], coords, real, color: st && st.rule === "야간" ? "#7a5cff" : "#ff6a00" }); }
   S.selected = null; S.showList = false; render();
-  S.animating = true; $("btn-play").textContent = "■ 경로 보기 멈춤"; $("btn-list").textContent = "■ 멈춤";
+  S.animating = true; $("btn-play").textContent = "■ 경로 보기 멈춤"; $("btn-list").innerHTML = "<i>■</i><span>멈춤</span>";
   m.clear();
   legs.forEach((L) => m.polyline(L.coords, { color: "#1b5e4a", dashed: !L.real, weight: 4, opacity: 0.18 }));
   const pins = {};
@@ -701,9 +776,11 @@ function showDemo(name) {
   const mark = (kinds) => kinds.forEach((k, n) => { const i = remaining()[0]; snapshot(`서류 ${docNumber(i)}번 ${RESULTS[k]}`); S.done[i] = t0 + n * 420; if (k !== "ok") S.res[i] = k; });
   S.done = {}; S.res = {}; S.tries = {}; S.history = []; S.order = [...S.plan.order]; S.selected = null; S.showList = false; S.listFilter = "all";
   if (name === "door") fakeDoor(remaining()[0]);
-  if (["progress", "picked", "list", "again", "collapsed", "recalc"].includes(name)) { mark(["ok", "absent", "addr", "ok"]); fakeDoor(remaining()[0]); }
+  S.reorder = false;
+  if (["progress", "picked", "list", "again", "collapsed", "recalc", "reorder"].includes(name)) { mark(["ok", "absent", "addr", "ok"]); fakeDoor(remaining()[0]); }
   if (name === "picked") S.selected = remaining()[4];
   if (name === "list" || name === "again") { S.showList = true; if (name === "again") S.listFilter = "again"; const i = S.order.find((x) => S.res[x] === "absent"); if (name === "list" && i) { (S.tries[i] = []).push({ at: S.done[i], res: "absent" }); delete S.done[i]; delete S.res[i]; S.order = S.order.filter((x) => x !== i).concat([i]); } }
+  if (name === "reorder") { S.showList = true; S.reorder = true; }
   if (name === "collapsed") { S.collapsed = true; $("sheet").classList.add("collapsed"); }
   if (name === "done") S.order.forEach((i, n) => { snapshot(`서류 ${docNumber(i)}번 ${RESULTS[n % 7 === 3 ? "absent" : n % 11 === 5 ? "addr" : "ok"]}`); S.done[i] = t0 + n * 300; if (n % 7 === 3) S.res[i] = "absent"; if (n % 11 === 5) S.res[i] = "addr"; });
   render(); if (S.map) S.map.resize(); followNext(); setTimeout(() => { if (S.map) S.map.resize(); followNext(); }, 200);
@@ -733,22 +810,39 @@ async function boot() {
   $("btn-more").onclick = (e) => { e.stopPropagation(); menu.classList.toggle("hidden"); };
   document.addEventListener("click", (e) => { if (!menu.contains(e.target) && e.target !== $("btn-more")) closeMenu(); });
   $("btn-fit").onclick = () => { closeMenu(); S.selected = null; render(); fitAll(); };
+  $("btn-fit2").onclick = $("btn-fit").onclick;   // 작은 화면에서는 '전체' 단추가 ⋯ 메뉴에
   $("btn-play").onclick = () => { closeMenu(); S.animating ? stopAnimation() : playRoute(); };
   const applyType = (t) => { S.map.setType(t); $("btn-maptype").textContent = t === "satellite" ? "일반 지도" : "위성 지도"; try { localStorage.setItem("songdal_maptype", t); } catch (e) {} };
   try { const t = localStorage.getItem("songdal_maptype"); if (t === "satellite") applyType(t); } catch (e) {}
   $("btn-maptype").onclick = () => { closeMenu(); applyType(S.map.type === "satellite" ? "normal" : "satellite"); };
-  $("btn-list").onclick = () => { S.ghost = null; if (S.animating) return stopAnimation(); S.showList = !S.showList; if (S.showList) setCollapsed(false); render(); };
+  // 맨 아래 메뉴: 카드 / 목록 / 재계산 / 되돌리기
+  $("btn-list").onclick = () => { S.ghost = null; if (S.animating) return stopAnimation(); if (S.showList) return; animateSheet(() => { S.showList = true; setCollapsed(false); render(); }); $("sheet").scrollTop = 0; };
+  $("btn-card").onclick = () => { S.ghost = null; if (!S.showList && !S.collapsed) return; animateSheet(() => { S.showList = false; S.reorder = false; setCollapsed(false); render(); }); $("sheet").scrollTop = 0; };
+  $("btn-dock-recalc").onclick = () => { if (remaining().length >= 2) openRecalc(true); };
+  $("btn-dock-undo").onclick = () => undo();
+  // 위 찾기 창: 서류 번호(숫자)나 이름·장소로 오늘 방문표 안에서 찾음 → 목록이 열리고 맞는 줄만 보임
+  const q = $("top-q"), qx = $("top-q-x");
+  q.addEventListener("input", () => {
+    S.listQ = q.value; qx.classList.toggle("hidden", !q.value);
+    if (!S.showList && q.value) animateSheet(() => { S.showList = true; S.reorder = false; S.listFilter = "all"; setCollapsed(false); render(); });
+    else render();
+  });
+  q.addEventListener("keydown", (e) => { if (e.key === "Enter") q.blur(); });
+  qx.onclick = () => { q.value = ""; S.listQ = ""; qx.classList.add("hidden"); render(); };
+  // 패널 높이가 바뀌면 오른쪽 아래 지도 단추·알림도 같이 올라감(--sheet-h)
+  const setSheetH = () => document.documentElement.style.setProperty("--sheet-h", $("sheet").offsetHeight + "px");
+  if (window.ResizeObserver) new ResizeObserver(setSheetH).observe($("sheet")); setSheetH();
   $("btn-reload").onclick = () => location.reload();
   $("btn-reset").onclick = () => { closeMenu(); if (confirm("오늘 기록(전달·부재·주소 문제)을 모두 지우고 순서도 처음대로 돌릴까요?")) { snapshot("기록 모두 지우기"); S.done = {}; S.res = {}; S.tries = {}; S.order = [...S.plan.order]; saveDone(); render(); followNext(); } };
   $("btn-send").onclick = () => { closeMenu(); sendResults(); };
   /* 회색 바: 누르면 접기/펼치기, 끌면 단계 이동 — 위로 끌면 접힘 → 카드 → 목록, 아래로 끌면 목록 → 카드 → 접힘 */
-  const sheetStep = (dir) => {
+  const sheetStep = (dir) => animateSheet(() => {
     if (dir < 0) { if (S.collapsed) setCollapsed(false); else if (!S.showList && !S.animating) S.showList = true; }
-    else { if (S.showList) S.showList = false; else if (!S.collapsed) setCollapsed(true); }
+    else { if (S.showList) { S.showList = false; S.reorder = false; } else if (!S.collapsed) setCollapsed(true); }
     render(); $("sheet").scrollTop = 0;
-  };
+  });
   // 누름: 접기/펼치기. 목록을 보던 중이면 목록을 닫고 접음(안 그러면 카드도 목록도 안 보임)
-  const tapHandle = () => { if (S.showList) S.showList = false; setCollapsed(!S.collapsed); render(); };
+  const tapHandle = () => animateSheet(() => { if (S.showList) { S.showList = false; S.reorder = false; } setCollapsed(!S.collapsed); render(); });
   const handle = $("handle"), sheet = $("sheet"); let drag = null;
   handle.addEventListener("click", (e) => { if (e.detail === 0) tapHandle(); });   // 키보드(Enter·Space)로 누른 경우. 손가락 누름은 아래 pointerup 에서 처리
   handle.addEventListener("pointerdown", (e) => { drag = { y: e.clientY, dy: 0 }; try { handle.setPointerCapture(e.pointerId); } catch (err) {} });
