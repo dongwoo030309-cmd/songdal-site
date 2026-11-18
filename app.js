@@ -95,12 +95,12 @@ function askRevisit(i) {
     <div class="rc-title">서류 ${docNumber(i)}번 다시 방문</div>
     <div class="basis">${esc(st.label || st.place || "")} · 앞선 방문: ${RESULTS[rk]} ${hhmm(S.done[i])}</div>
     <div class="rv-info">남은 순서 <b>${pr.pos}번째</b>에 넣어요${r ? ` · 예상 <b>${hhmm(r.arrive)}</b> 도착${r.wait > 60 ? ` (${hhmm(r.begin)}부터 송달)` : ""}` : ""}</div>
-    ${win ? `<div class="rv-cond${r && r.late ? " late" : ""}">${r && r.late ? `⚠ ${esc(win)} 조건이 지나서 <b>오늘 중 방문</b>으로 들어가요` : `${esc(win)} 조건 안에 갈 수 있어요`}</div>` : ""}
+    ${win ? `<div class="rv-cond${!r || r.late ? " late" : ""}">${!r ? `⚠ 예상 시각을 계산하지 못했어요 (${esc(win)} 조건 확인 필요)` : r.late ? (r.miss ? `⚠ 이 자리에 넣으면 ${esc(win)} 조건을 넘겨요 (<b>오늘 중 방문</b>)` : `⚠ ${esc(win)} 조건이 지나서 <b>오늘 중 방문</b>으로 들어가요`) : `${esc(win)} 조건 안에 갈 수 있어요`}</div>` : ""}
     ${pr.ok ? "" : `<div class="rv-cond late">⚠ 다시 넣으면 퇴근 기한 안에 다 못 돌 수 있어요</div>`}
     ${rk === "addr" ? `<div class="rv-cond">주소 문제였던 곳이에요. 주소를 확인한 뒤에 다시 넣어 주세요.</div>` : ""}
     <div class="actions"><button class="ghost" id="rv-cancel">그만두기</button><button id="rv-go">${rk === "addr" ? "주소 확인했어요 · 넣기" : "다시 넣기"}</button></div></div>`;
   box.classList.remove("hidden");
-  $("rv-cancel").onclick = () => box.classList.add("hidden");
+  $("rv-cancel").onclick = () => { box.classList.add("hidden"); S.ghostDraft = null; };
   $("rv-go").onclick = () => {
     box.classList.add("hidden");
     revisit(i, pr.order); S.ghost = { i, pos: pr.pos, ...(S.ghostDraft || {}) }; S.ghostDraft = null;
@@ -116,9 +116,9 @@ function askRecord(i) {
     <div class="hint" style="margin:10px 0">기록 취소는 잘못 누른 기록을 지울 때만 써요. 지우면 이 곳은 남은 순서로 돌아가요.</div>
     <div class="actions">${rk !== "ok" ? `<button class="wide" id="ra-again">다시 방문…</button>` : ""}<button class="ghost warn" id="ra-undo">기록 취소</button><button class="ghost" id="ra-close">닫기</button></div></div>`;
   box.classList.remove("hidden");
-  $("ra-close").onclick = () => box.classList.add("hidden");
+  $("ra-close").onclick = () => { box.classList.add("hidden"); S.ghostDraft = null; };
   if ($("ra-again")) $("ra-again").onclick = () => askRevisit(i);
-  $("ra-undo").onclick = () => { box.classList.add("hidden"); S.ghost = null; snapshot(`서류 ${docNumber(i)}번 기록 취소`); delete S.done[i]; if (S.res) delete S.res[i]; saveDone(); render(); toast(`서류 ${docNumber(i)}번 기록을 취소했어요`, "되돌리기", undo, 8000); };
+  $("ra-undo").onclick = () => { box.classList.add("hidden"); S.ghost = null; S.ghostDraft = null; snapshot(`서류 ${docNumber(i)}번 기록 취소`); delete S.done[i]; if (S.res) delete S.res[i]; saveDone(); render(); toast(`서류 ${docNumber(i)}번 기록을 취소했어요`, "되돌리기", undo, 8000); };
 }
 /* 되돌리기 버튼 글씨: 무엇을 되돌리는지 (예: '↶ 서류 2번') */
 function undoText() { const h = (S.history || [])[S.history.length - 1]; const m = h && /서류 \d+번/.exec(h.label || ""); return m ? `↶ ${m[0]}` : "↶ 되돌리기"; }
@@ -242,20 +242,23 @@ function liveBase(useGps) {
    - missed = 아직 시간이 남았는데 이 순서 때문에 놓치는 곳 수. 순서를 고를 때 이 수가 적은 쪽을 먼저 고름(제시간 방문 우선).
    - 맥의 아침 계획(planner.py)은 원래 시간창을 그대로 지킴. */
 function simulate(order, origin, t0) {
-  let t = t0, p = origin, drive = 0, wait = 0, missed = 0; const rows = [], lim = S.plan.return_by;
+  let t = t0, p = origin, drive = 0, wait = 0, missed = 0, broken = 0; const rows = [], lim = S.plan.return_by;
   for (const i of order) {
     const st = stopOf(i); const leg = legT(p, i); const arrive = t + leg; const [a, b] = st.window;
     let begin = Math.max(arrive, a), late = false;
     if (b < t0) { late = true; begin = arrive; }                                  // 이미 지난 시간창
-    else if (begin + st.service > b) { late = true; missed++; begin = arrive; }   // 이 순서로는 시간창을 놓침
+    let miss = false;
+    if (!late && begin + st.service > b) { late = true; miss = true; missed++; begin = arrive; }   // 이 순서로는 시간창을 놓침
     if (late && begin + st.service > lim) return { ok: false };
-    rows.push({ i, arrive, begin, leave: begin + st.service, travel: leg, wait: begin - arrive, late });
+    const strict = !!st.custom && late;   // 맥에서 건별로 직접 정한 시간(폴더 규칙과 달리 '오늘 중'으로 넘어가지 않고 못 지킨 것으로 셈)
+    if (strict) broken++;
+    rows.push({ i, arrive, begin, leave: begin + st.service, travel: leg, wait: begin - arrive, late, miss, strict });
     t = begin + st.service; drive += leg; wait += begin - arrive; p = i;
   }
   const back = order.length ? legT(p, END_OF()) : 0;
-  return { ok: t + back <= lim || order.length === 0, finish: t + back, drive: drive + back, wait, rows, missed };
+  return { ok: t + back <= lim || order.length === 0, finish: t + back, drive: drive + back, wait, rows, missed, broken };
 }
-function score(order, origin, t0) { const r = simulate(order, origin, t0); return r.ok ? [0, r.missed, r.finish, r.drive] : [1, 0, 0, 0]; }
+function score(order, origin, t0) { const r = simulate(order, origin, t0); return r.ok ? [0, r.broken, r.missed, r.finish, r.drive] : [1, 0, 0, 0, 0]; }   // 직접 정한 시간 → 폴더 시간 → 종료 → 운전
 function less(a, b) { for (let k = 0; k < a.length; k++) { if (a[k] !== b[k]) return a[k] < b[k]; } return false; }
 function improve(order, origin, t0, budgetMs) {
   let best = order.slice(), bs = score(best, origin, t0); const end = Date.now() + budgetMs; let improved = true;
@@ -301,15 +304,15 @@ function render() {
     const isNext = i === rem[0];
     next.innerHTML = `
       ${isNext ? "" : `<div class="picked"><span>다음 차례가 아닌 곳을 보고 있어요</span><button id="btn-back">다음 방문(서류 ${docNumber(rem[0])}번)으로</button></div>`}
-      <div class="kicker"><span>${isNext ? "다음 방문" : "선택한 방문지"}${S.collapsed ? ` · <span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)}</span>` : ""}</span><span class="tools">${(S.history || []).length ? `<button class="tool" id="btn-undo" title="${esc(S.history[S.history.length - 1].label)} 되돌리기">${undoText()} 되돌리기</button>` : ""}${rem.length >= 2 ? `<button class="tool" id="btn-recalc">🔄 재계산</button>` : ""}</span></div>
+      <div class="kicker"><span>${isNext ? "다음 방문" : "선택한 방문지"}${S.collapsed && !(e && e.late) ? (st.custom ? ` · <span class="tag custom">⏰ ${esc(st.custom)}</span>` : ` · <span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)}</span>`) : ""}</span><span class="tools">${(S.history || []).length ? `<button class="tool" id="btn-undo" title="${esc(S.history[S.history.length - 1].label)} 되돌리기">${undoText()} 되돌리기</button>` : ""}${rem.length >= 2 ? `<button class="tool" id="btn-recalc">🔄 재계산</button>` : ""}</span></div>
       ${triesText(i) ? `<div class="again-note">다시 방문하는 곳이에요 · 앞선 방문: ${esc(triesText(i))}</div>` : ""}
-      <div class="docrow"><div class="docno"><small>서류</small><b>${docNumber(i)}</b></div><div class="name">${esc(st.label || st.place || "(이름 없음)")}</div></div>
+      <div class="docrow"><div class="docno"><small>서류</small><b>${docNumber(i)}</b></div><div class="name">${esc(st.label || st.place || "(이름 없음)")}${e && e.late ? (st.custom ? `<span class="late-chip strict">⛔ ${e.miss ? `지금 순서로는 직접 정한 시간(${esc(st.custom)})을 못 지켜요` : `직접 정한 시간(${esc(st.custom)})이 지났어요`}</span>` : `<span class="late-chip">⏰ ${e.miss ? `지금 순서로는 ${esc(st.rule)} 시간을 넘겨요` : `${esc(st.rule)} 시간 지남 · 오늘 중 방문`}</span>`) : ""}</div></div>
       ${st.label && st.place ? `<div class="place">${esc(st.place)}</div>` : ""}
       ${st.door && st.door.length ? st.door.map((d) => `<div class="door"><span class="k">출입</span><span class="code">${esc(d.code)}</span><span class="dn">${d.note ? `<span class="use">${esc(d.note)}</span>` : ""}<span class="nm">${d.note && d.name ? " · " : ""}${esc(d.name)}</span></span></div>`).join("") : ""}
       <div class="addr">${esc(st.address)}${st.memo ? ` · <b class="memo">${esc(st.memo)}</b>` : ""}${st.folder && st.folder.includes(" + ") ? `<br><b>두 폴더 문건 함께 확인</b> (${esc(st.folder)})` : ""}</div>
       <div class="act${isNext ? "" : " other"}">
         <div class="actions">
-          <a class="wide" href="${navLink(st)}"><button class="wide" style="width:100%">네이버지도 길안내</button></a>
+          <a class="wide" href="${navLink(st)}"><button class="wide" style="width:100%">${isNext ? "네이버지도 길안내" : `서류 ${docNumber(i)}번 길안내`}</button></a>
           <button class="wide big" id="btn-done">${isNext ? "전달 완료" : `서류 ${docNumber(i)}번 전달 완료`}</button>
         </div>
         <div class="actions3">
@@ -320,7 +323,7 @@ function render() {
       </div>
       <!-- 버튼이 항상 먼저 보이게: 시간·조건 정보는 버튼 아래 -->
       <div class="more-info">${timesHtml(planned[i], e, base, isNext, isNext ? null : base.t + legT(base.origin, i))}</div>
-      <div class="meta more-info"><span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)} ${st.rule === "아무때나" ? "" : hhmm(st.window[0]) + "–" + hhmm(st.window[1])}</span>${e && e.late ? `<span class="tag late">${esc(st.rule)} 시간 지남 · 오늘 중 방문</span>` : ""}${e ? `<span class="tag">이동 ${mins(e.travel)}</span>` : ""}<span class="hint">남은 ${rem.length}건${sim.ok ? ` · 지금 기준 종료 ${hhmm(sim.finish)}` : " · 기한 안에 다 못 돌 수 있어요"}</span></div>`;
+      <div class="meta more-info">${st.custom ? `<span class="tag custom">⏰ 직접 정한 시간 ${esc(st.custom)}</span>` : `<span class="tag ${RULE_CLASS[st.rule] || ""}">${esc(st.rule)} ${st.rule === "아무때나" ? "" : hhmm(st.window[0]) + "–" + hhmm(st.window[1])}</span>`}${e ? `<span class="tag">이동 ${mins(e.travel)}</span>` : ""}<span class="hint">남은 ${rem.length}건${sim.ok ? ` · 지금 기준 종료 ${hhmm(sim.finish)}` : " · 기한 안에 다 못 돌 수 있어요"}</span></div>`;
     if ($("btn-undo")) $("btn-undo").onclick = undo;
     if ($("btn-back")) $("btn-back").onclick = () => { S.selected = null; render(); $("sheet").scrollTop = 0; followNext(); };
     if ($("btn-recalc")) $("btn-recalc").onclick = () => openRecalc(true);
@@ -360,7 +363,7 @@ function renderList(etas) {
   const box = $("list"); box.classList.toggle("hidden", !S.showList);
   const wasListing = $("app").classList.contains("listing");
   $("sheet").classList.toggle("listing", !!S.showList); $("app").classList.toggle("listing", !!S.showList);
-  if (wasListing !== !!S.showList && S.map) setTimeout(() => { S.map.resize(); followNext(); }, 60);
+  if (wasListing !== !!S.showList && S.map) setTimeout(() => { S.map.resize(); if (S.selected != null && S.order.includes(S.selected) && !S.done[S.selected]) fitLeg(S.selected); else followNext(); }, 60);
   if (!S.animating) $("btn-list").textContent = S.showList ? "카드" : "목록";
   if (!S.showList) return;
   const rem = remaining(), cnt = resultCounts(), nAgain = cnt.absent + cnt.addr;
@@ -370,7 +373,7 @@ function renderList(etas) {
     <div class="filters">${chip("all", `전체 ${S.order.length}`)}${chip("left", `남은 곳 ${rem.length}`)}${chip("again", `다시 갈 곳 ${nAgain}`)}</div>
     <div class="sum">${esc(countsText(cnt))} · 남음 ${rem.length}</div>`;
   // 찾기: 숫자면 서류 번호가 그 숫자로 시작하는 곳, 글자면 이름·장소에 들어 있는 곳 (입력 중에 화면을 다시 그리지 않고 줄만 숨김)
-  const applyQ = () => { const q = (S.listQ || "").trim().toLowerCase(); box.querySelectorAll(".item").forEach((el) => { el.style.display = !q || (/^\d+$/.test(q) ? el.dataset.doc.startsWith(q) : el.dataset.q.includes(q)) ? "" : "none"; }); };
+  const applyQ = () => { const q = (S.listQ || "").trim().toLowerCase(); box.querySelectorAll(".item:not(.ghost-row)").forEach((el) => { el.style.display = !q || (/^\d+$/.test(q) ? el.dataset.doc.startsWith(q) : el.dataset.q.includes(q)) ? "" : "none"; }); };
   $("list-q").oninput = (e) => { S.listQ = e.target.value; applyQ(); };
   box.querySelectorAll(".fchip").forEach((b) => (b.onclick = () => { S.listFilter = b.dataset.f; S.ghost = null; render(); $("sheet").scrollTop = 0; }));
   const shown = S.order.filter((i) => f === "all" || (f === "left" ? !S.done[i] : resultOf(i) && resultOf(i) !== "ok"));
@@ -394,11 +397,11 @@ function renderList(etas) {
     const rk = resultOf(i);
     const div = document.createElement("div"); div.className = "item" + (done ? " done" : "") + (rk && rk !== "ok" ? " again" : "") + (cur ? " cur" : "");
     div.dataset.doc = String(docNumber(i)); div.dataset.i = String(i); div.dataset.q = `${st.label || ""} ${st.place || ""}`.toLowerCase();
-    div.innerHTML = `<div class="n">${docNumber(i)}</div><div class="t"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b>${st.label && st.place ? " · " + esc(st.place) : ""}<small>${esc(st.rule)}${st.door && st.door.length ? " · 출입 " + esc(st.door[0].code) : ""}${done ? ` · <span class="rk ${rk}">${RESULTS[rk]}</span> ${hhmm(S.done[i])}` : e ? ` · 도착 ${hhmm(e.arrive)}${e.wait > 60 ? ` · <b class="from">${hhmm(e.begin)}부터 송달</b>` : ""}${e.late ? ` · <b class="lateb">${esc(st.rule)} 시간 지남 · 오늘 중</b>` : ""}` : ""}${triesText(i) ? ` · <span class="rk absent">재방문</span> (${esc(triesText(i))})` : ""}</small></div>${done && rk !== "ok" ? `<button class="again">다시 방문…</button>` : done ? `<span class="more" aria-hidden="true">›</span>` : `<button class="ghost go">보기</button>`}`;
+    div.innerHTML = `<div class="n">${docNumber(i)}</div><div class="t"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b>${st.label && st.place ? " · " + esc(st.place) : ""}<small>${st.custom ? `⏰ 직접 ${esc(st.custom)}` : esc(st.rule)}${st.door && st.door.length ? " · 출입 " + esc(st.door[0].code) : ""}${done ? ` · <span class="rk ${rk}">${RESULTS[rk]}</span> ${hhmm(S.done[i])}` : e ? ` · 도착 ${hhmm(e.arrive)}${e.wait > 60 ? ` · <b class="from">${hhmm(e.begin)}부터 송달</b>` : ""}${e.late ? (st.custom ? ` · <b class="lateb strict">⛔ 직접 ${esc(st.custom)} 못 지킴</b>` : ` · <b class="lateb">${e.miss ? `지금 순서로는 ${esc(st.rule)} 넘김` : `${esc(st.rule)} 시간 지남 · 오늘 중`}</b>`) : ""}` : ""}${triesText(i) ? ` · <span class="rk absent">재방문</span> (${esc(triesText(i))})` : ""}</small></div>${done && rk !== "ok" ? `<button class="again">다시 방문…</button>` : done ? `<span class="more" aria-hidden="true">›</span>` : `<button class="ghost go">보기</button>`}`;
     const ag = div.querySelector("button.again"), go = div.querySelector("button.go");
     if (ag) ag.onclick = (ev) => { ev.stopPropagation(); S.ghost = null; const h = div.offsetHeight; askRevisit(i); S.ghostDraft = { slot: n, h }; };
     if (go) go.onclick = () => { S.ghost = null; S.selected = i; S.showList = false; render(); fitLeg(i); };
-    if (done) div.onclick = () => askRecord(i);   // 기록한 곳: 줄을 누르면 기록 내용과 [기록 취소]
+    if (done) div.onclick = () => { S.ghostDraft = { slot: n, h: div.offsetHeight }; askRecord(i); };   // 기록한 곳: 줄을 누르면 기록 내용과 [기록 취소]
     box.appendChild(div);
   });
   if (ghostAt === shown.length) ghostRow();
@@ -468,7 +471,7 @@ function fitLeg(i) { const { coords } = legCoords(prevOf(i), i); S.map.fit(coord
 /* ---------- 남은 건 다시 계산 (미리보기 → 적용) ---------- */
 function gainOf(pr) {
   if (!pr.next.ok) return { finish: 0, drive: 0 };
-  if (!pr.cur.ok || (pr.cur.missed || 0) > (pr.next.missed || 0)) return { finish: 3600 * 24, drive: 0, fixes: true };
+  if (!pr.cur.ok || (pr.cur.broken || 0) > (pr.next.broken || 0) || ((pr.cur.broken || 0) === (pr.next.broken || 0) && (pr.cur.missed || 0) > (pr.next.missed || 0))) return { finish: 3600 * 24, drive: 0, fixes: true };
   // 화면에 보이는 시:분 차이와 맞도록 분 단위로 버림해서 비교
   const fm = (x) => Math.floor(x / 60) * 60;
   return { finish: fm(pr.cur.finish) - fm(pr.next.finish), drive: Math.round(pr.cur.drive / 60) * 60 - Math.round(pr.next.drive / 60) * 60 };
@@ -479,6 +482,22 @@ function getGps() {
     navigator.geolocation.getCurrentPosition((p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy || 0, at: Date.now() }),
       () => resolve(null), { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
   });
+}
+/* 재계산 미리보기: 새 순서로 제시간이 되는 곳과 그래도 시간을 넘기는 곳 (서류 번호·이름·도착 시각 전→후) */
+function fixList(pr) {
+  if (!pr.next.ok) return "";
+  const cur = Object.fromEntries((pr.cur.rows || []).map((r) => [r.i, r])), nx = pr.next.rows || [];
+  const who = (i) => `서류 <b>${docNumber(i)}</b>번 ${esc(stopOf(i).label || stopOf(i).place || "")}`;
+  const win = (i) => { const st = stopOf(i); return st.custom ? `<b>직접 ${esc(st.custom)}</b>` : `${esc(st.rule)} ${hhmm(st.window[0])}–${hhmm(st.window[1])}`; };
+  const fixed = nx.filter((r) => !r.late && cur[r.i] && cur[r.i].miss);
+  // 지금 순서가 퇴근 기한을 넘겨 중간에 계산이 끊겼으면 곳별 비교가 없음 → '새로/그래도'를 나누지 않고 새 순서에서 넘기는 곳만 보여 줌
+  const known = !!(pr.cur.rows && pr.cur.rows.length);
+  const worse = known ? nx.filter((r) => r.miss && !(cur[r.i] && cur[r.i].miss)) : [];   // 지금 순서로는 제시간인데 새 순서에서 늦어지는 곳
+  const still = nx.filter((r) => r.miss && (!known || (cur[r.i] && cur[r.i].miss)));
+  if (!fixed.length && !worse.length && !still.length && !nx.some((r) => r.strict)) return "";
+  const sec = (title, cls, mark, rows, both) => rows.length ? `<div class="h">${title}</div>` + rows.map((r) => `<div class="${cls}">${mark} ${who(r.i)} · ${win(r.i)} · 도착 ${both && cur[r.i] ? `${hhmm(cur[r.i].arrive)} → ` : ""}<b>${hhmm(r.arrive)}</b></div>`).join("") : "";
+  const gone = nx.filter((r) => r.strict && !r.miss);   // 직접 정한 시간이 이미 지난 곳
+  return `<div class="rc-fix">${sec("직접 정한 시간이 이미 지난 곳", "bad", "⛔", gone, false)}${sec("제시간이 되는 곳", "ok", "✓", fixed, true)}${sec("새로 시간을 넘기는 곳 (오늘 중 방문)", "bad", "⚠", worse, true)}${sec(known ? "바꿔도 시간을 넘기는 곳 (오늘 중 방문)" : "새 순서에서 시간을 넘기는 곳 (오늘 중 방문)", "bad", "⚠", still, false)}</div>`;
 }
 async function openRecalc(useGps, ready) {
   const box = $("recalc"); box.classList.remove("hidden");
@@ -493,7 +512,7 @@ async function openRecalc(useGps, ready) {
   const chips = pr.nextOrder.map((i, k) => `<span class="chip ${pr.rem[k] !== i ? "moved" : ""}">${docNumber(i)}</span>`).join("→");
   const line = (lbl, r) => r.ok ? `<tr><td>${lbl}</td><td><b>${hhmm(r.finish)}</b></td><td>${mins(r.drive)}</td><td>${mins(r.wait)}</td></tr>` : `<tr><td>${lbl}</td><td colspan="3" class="bad">기한 안에 다 못 돌아요</td></tr>`;
   const verdict = !changed ? "지금 순서가 이미 가장 좋아요." :
-    g.fixes && pr.cur.ok ? `바꾸면 <b>제시간에 갈 수 있는 곳이 ${pr.cur.missed - pr.next.missed}곳 늘어요</b>. ` + (pr.next.missed ? `그래도 ${pr.next.missed}곳은 시간을 넘겨요(오늘 중 방문). ` : "") +
+    g.fixes && pr.cur.ok ? ((pr.cur.broken || 0) > (pr.next.broken || 0) ? `바꾸면 <b>직접 정한 시간을 지키는 곳이 ${pr.cur.broken - pr.next.broken}곳 늘어요</b>. ` : "") + (pr.cur.missed > pr.next.missed ? `${(pr.cur.broken || 0) > (pr.next.broken || 0) ? "" : "바꾸면 "}<b>제시간에 갈 수 있는 곳이 ${pr.cur.missed - pr.next.missed}곳 늘어요</b>. ` : "") + (pr.next.missed ? `그래도 ${pr.next.missed}곳은 시간을 넘겨요(오늘 중 방문). ` : "") +
       (() => { const d = Math.round((pr.next.finish - pr.cur.finish) / 60); return d === 0 ? "끝나는 시각은 같아요." : `끝나는 시각은 ${Math.abs(d)}분 ${d > 0 ? "늦어져요" : "빨라져요"}.`; })() :
     g.fixes ? "지금 순서로는 퇴근 기한 안에 다 못 돌아서, 돌 수 있게 바꿨어요." + (pr.next.missed ? ` ${pr.next.missed}곳은 시간을 넘겨요(오늘 중 방문).` : "") :
     `바꾸면 <b>${g.finish > 0 ? Math.round(g.finish / 60) + "분 빨리 끝나고" : "끝나는 시각은 같고"}</b>, 운전이 <b>${Math.round(g.drive / 60)}분</b> ${g.drive >= 0 ? "줄어요" : "늘어요"}.`;
@@ -503,7 +522,8 @@ async function openRecalc(useGps, ready) {
     ${note ? `<div class="hint warn">${esc(note)}</div>` : ""}
     <table class="rc-table"><tr><th></th><th>종료</th><th>운전</th><th>대기</th></tr>${line("지금 순서", pr.cur)}${line("새 순서", pr.next)}</table>
     <div class="rc-verdict">${verdict}</div>
-    ${changed ? `<div class="rc-chips">${chips}</div><div class="hint">숫자는 아침에 인쇄한 <b>서류 번호</b>예요. 번호는 그대로이고 가는 순서만 바뀌어요. 주황색이 자리가 바뀐 곳이에요.</div>` : ""}
+    ${changed ? fixList(pr) : ""}
+    ${changed ? `<div class="rc-chips">${chips}</div><div class="hint">숫자는 아침에 인쇄한 <b>서류 번호</b>예요. 번호는 그대로이고 가는 순서만 바뀌어요. 주황색·밑줄이 자리가 바뀐 곳이에요.</div>` : ""}
     <div class="actions">${changed ? `<button id="rc-apply">이 순서로 바꾸기</button><button class="ghost" id="rc-cancel">그대로 두기</button>` : `<button class="ghost wide" id="rc-cancel">닫기</button>`}</div>
   </div>`;
   $("rc-cancel").onclick = () => box.classList.add("hidden");
