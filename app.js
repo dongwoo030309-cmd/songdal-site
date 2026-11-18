@@ -605,27 +605,61 @@ function endMarkers(m) {
   one(S.plan.start, "출발");
   if (S.plan.end_mode === "custom" && S.plan.end && !(S.plan.end.lat === S.plan.start.lat && S.plan.end.lng === S.plan.start.lng)) one(S.plan.end, "종료");
 }
+/* 같은 길을 두 번 이상 지나가면 선이 겹쳐 순서를 알아보기 어려웠음(11-19 사용자 요청) →
+   앞 구간이 이미 지나간 자리를 다시 지나가는 부분만 진행 방향 오른쪽으로 화면 5px씩 비켜 그림(겹칠 때마다 한 단계, 최대 3단계).
+   우측 통행이라 갔다가 같은 길로 되돌아오는 구간은 양쪽으로 갈라짐. 간격은 화면 픽셀 기준이라 확대 수준이 바뀌면 다시 계산(onZoom) */
+function spreadLegs(legs, zoom) {
+  const lat0 = (legs.find((L) => L.coords.length) || { coords: [[36.5, 127.3]] }).coords[0][0];
+  const K = 111320, kx = K * Math.cos(lat0 * Math.PI / 180), mpp = 156543.03 * Math.cos(lat0 * Math.PI / 180) / Math.pow(2, zoom || 14);
+  const step = 12, gy = 14 / K, gx = 14 / kx, used = new Map();
+  const key = (y, x) => y + ":" + x, cy = (p) => Math.round(p[0] / gy), cx = (p) => Math.round(p[1] / gx);
+  const near = (p) => { const y = cy(p), x = cx(p); let n = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) n = Math.max(n, used.get(key(y + dy, x + dx)) || 0); return n; };
+  return legs.map((L) => {
+    if (!L.real || L.coords.length < 2) return L;
+    const d = [L.coords[0]];   // 12m 간격으로 촘촘하게
+    for (let k = 1; k < L.coords.length; k++) {
+      const a = L.coords[k - 1], b = L.coords[k], n = Math.max(1, Math.ceil(Math.hypot((b[0] - a[0]) * K, (b[1] - a[1]) * kx) / step));
+      for (let t = 1; t <= n; t++) d.push([a[0] + (b[0] - a[0]) * t / n, a[1] + (b[1] - a[1]) * t / n]);
+    }
+    // 출발·도착 지점 바로 옆(약 25m)은 앞 구간과 만나는 자리라 겹침으로 세지 않음
+    const lv = d.map((p, k) => (k < 2 || k > d.length - 3 ? 0 : Math.min(3, near(p))));
+    new Set(d.map((p) => key(cy(p), cx(p)))).forEach((c) => used.set(c, (used.get(c) || 0) + 1));
+    if (!lv.some((x) => x)) return L;
+    const sm = lv.map((_, k) => { let t = 0, n = 0; for (let j = k - 5; j <= k + 5; j++) if (j >= 0 && j < lv.length) { t += lv[j]; n++; } return t / n; });   // 단계가 바뀌는 곳은 약 60m에 걸쳐 서서히
+    const off = 5 * mpp;
+    const coords = d.map((p, k) => {
+      if (!sm[k]) return p;
+      const a = d[Math.max(0, k - 1)], b = d[Math.min(d.length - 1, k + 1)], vy = (b[0] - a[0]) * K, vx = (b[1] - a[1]) * kx, len = Math.hypot(vx, vy) || 1;
+      return [p[0] - (vx / len) * off * sm[k] / K, p[1] + (vy / len) * off * sm[k] / kx];   // 진행 방향 오른쪽(동=vy, 북=-vx)
+    });
+    return { ...L, coords, spread: true };
+  });
+}
 function drawRoute() {
   const m = S.map; if (!m || S.animating) return; m.clear(); S.markers = {};
   const rem = remaining(); const seq = S.plan.end_mode === "last" ? [currentPos(), ...rem] : [currentPos(), ...rem, S.plan.stops.length + 1];
   const focus = S.selected && S.order.includes(S.selected) ? S.selected : null;
-  for (let k = 0; k < seq.length - 1; k++) {
-    const a = seq[k], b = seq[k + 1]; const { coords, real } = legCoords(a, b);
+  const legs = spreadLegs(seq.slice(0, -1).map((a, k) => ({ a, b: seq[k + 1], ...legCoords(a, seq[k + 1]) })), m.zoom ? m.zoom() : 14);
+  S.zoomDrawn = m.zoom ? Math.round(m.zoom()) : null;
+  legs.forEach(({ b, coords, real }, k) => {
     const st = b <= S.plan.stops.length ? stopOf(b) : null;
     const base = st && st.rule === "야간" ? "#5b4bb5" : "#1b5e4a";
     if (focus) m.polyline(coords, { color: base, dashed: !real, weight: 4, opacity: 0.22 });
-    else m.polyline(coords, { color: base, dashed: !real, weight: k === 0 ? 6 : 4, opacity: k === 0 ? 0.95 : 0.7 });
-  }
+    else m.polyline(coords, { color: base, dashed: !real, weight: k === 0 ? 6 : 4, opacity: k === 0 ? 0.95 : 0.7, z: k === 0 ? 6 : 5 });
+  });
   if (focus) {   /* 앞 순서 → 선택한 곳 구간만 또렷하게 */
-    const { coords, real } = legCoords(prevOf(focus), focus);
-    m.polyline(coords, { color: "#ffffff", weight: 11, opacity: 0.9 });
-    m.polyline(coords, { color: "#ff6a00", dashed: !real, weight: 7, opacity: 1 });
+    const pf = prevOf(focus), L = legs.find((x) => x.a === pf && x.b === focus), { coords, real } = L || legCoords(pf, focus);
+    m.polyline(coords, { color: "#ffffff", weight: 11, opacity: 0.9, z: 7 });
+    m.polyline(coords, { color: "#ff6a00", dashed: !real, weight: 7, opacity: 1, z: 8 });
   }
   // 핀(11-18, 사용자 요청): 네이버지도 폴더 색 + 흰 별, 숫자 없음. 다음 방문은 크게+고리, 고른 곳도 크게, 마친 곳은 작고 흐리게
   S.order.forEach((i) => {
     const st = stopOf(i); const done = !!S.done[i]; const isNext = rem[0] === i, big = isNext || focus === i;
+    // 핀 아래 이름(11-19 사용자 요청): 아이폰에 이름을 올리지 않았으면 장소 이름, 그것도 없으면 이름 없이. 많이 축소하면 숨김(map.js)
+    const nm = String(st.label || st.place || "").trim();
     S.markers[i] = m.marker({ lat: st.lat, lng: st.lng, icon: "star", size: big ? 30 : done ? 18 : 22, ring: isNext, dim: done, z: focus === i ? 92 : isNext ? 90 : done ? 1 : 10,
-      color: pinColor(st), onClick: () => { S.selected = i; render(); fitLeg(i); } });
+      name: nm.length > 9 ? nm.slice(0, 8) + "…" : nm, nameKeep: big, title: `서류 ${docNumber(i)}번${nm ? " " + nm : ""}`,
+      color: pinColor(st), onClick: () => { S.selected = i; render(); $("sheet").scrollTop = 0; fitLeg(i); } });
   });
   endMarkers(m);
   if (S.me) m.marker({ lat: S.me.lat, lng: S.me.lng, label: "나", color: "#1a73e8", size: 30, z: 99 });
@@ -692,6 +726,8 @@ async function openRecalc(useGps, ready) {
   const g = gainOf(pr);
   const changed = pr.nextOrder.join(",") !== pr.rem.join(",");
   const chips = pr.nextOrder.map((i, k) => `<span class="chip ${pr.rem[k] !== i ? "moved" : ""}">${docNumber(i)}</span>`).join("→");
+  // 끝나는 곳(11-19 사용자 질문: '마지막 송달지에서 끝나는 것처럼 보임') — 종료 시각은 끝 장소까지 가는 시간을 포함해서 계산함. 그걸 화면에 밝힘
+  const endName = S.plan.end_mode === "last" ? "" : esc((S.plan.end_mode === "custom" && S.plan.end ? S.plan.end.name : (S.plan.start || {}).name) || "끝 장소");
   const line = (lbl, r) => r.ok ? `<tr><td>${lbl}</td><td><b>${hhmm(r.finish)}</b></td><td>${mins(r.drive)}</td><td>${mins(r.wait)}</td></tr>` : `<tr><td>${lbl}</td><td colspan="3" class="bad">기한 안에 다 못 돌아요</td></tr>`;
   // 새 순서로도 퇴근 기한 안에 다 못 돌면 비교할 수 없음 → '0분 줄어요' 같은 안내·적용을 막음 (11-18 GPT 지적)
   const noGood = !pr.next.ok;
@@ -705,7 +741,8 @@ async function openRecalc(useGps, ready) {
     <div class="rc-title">남은 ${pr.rem.length}건 순서 다시 계산</div>
     <div class="basis">기준: ${esc(pr.base.label)}${pr.base.origin && typeof pr.base.origin === "object" ? " · 현재 위치에서 첫 곳까지는 추정" : ""}</div>
     ${note ? `<div class="hint warn">${esc(note)}</div>` : ""}
-    <table class="rc-table"><tr><th></th><th>종료</th><th>운전</th><th>대기</th></tr>${line("지금 순서", pr.cur)}${line("새 순서", pr.next)}</table>
+    <div class="hint rc-end">${endName ? `마지막 곳을 마친 뒤 <b>${endName}</b>까지 가는 시간까지 넣어서 계산했어요.` : "마지막 송달지에서 끝나는 것으로 계산했어요(맥에서 '마지막 곳에서 종료'로 계산함)."}</div>
+    <table class="rc-table"><tr><th></th><th>${endName ? `${endName} 도착` : "종료"}</th><th>운전</th><th>대기</th></tr>${line("지금 순서", pr.cur)}${line("새 순서", pr.next)}</table>
     <div class="rc-verdict">${verdict}</div>
     ${changed && !noGood ? fixList(pr) : ""}
     ${changed && !noGood ? `<div class="rc-chips">${chips}</div><div class="hint">숫자는 아침에 인쇄한 <b>서류 번호</b>예요. 번호는 그대로이고 가는 순서만 바뀌어요. 주황색·밑줄이 자리가 바뀐 곳이에요.</div>` : ""}
@@ -924,6 +961,8 @@ async function boot() {
   loadDone();
   if (!S.map) S.map = await SongdalMap.create($("map"), { clientId: S.plan.naver_client_id, onFallback: () => { S.fallbackNote = "네이버 지도 대신 OpenStreetMap 으로 표시 중"; if (S.plan) toast(S.fallbackNote); } });
   render(); followNext(); setTimeout(() => { S.map.resize(); followNext(); }, 300);   // 열자마자 다음 방문지가 지도에 보이게 (전체는 ⋯ → 전체 경로 보기)
+  // 확대 수준이 바뀌면 겹친 경로선 간격(화면 5px)을 다시 계산해 그림
+  if (S.map.onZoom && !S.zoomHooked) { S.zoomHooked = true; S.map.onZoom((z) => { clearTimeout(S.zoomT); S.zoomT = setTimeout(() => { if (!S.animating && Math.round(z) !== S.zoomDrawn) drawRoute(); }, 150); }); }
   $("map-next").onclick = () => { S.selected = null; render(); followNext(); };
   $("map-me").onclick = showMe;
   if (S.fallbackNote) toast(S.fallbackNote);
