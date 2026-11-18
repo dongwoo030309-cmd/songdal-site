@@ -32,10 +32,33 @@
     star: '<path fill="#fff" d="M12 3.2l2.6 5.3 5.8.85-4.2 4.1 1 5.8L12 16.5l-5.2 2.75 1-5.8-4.2-4.1 5.8-.85z"/>',
     home: '<path fill="#fff" d="M12 3.6 3 11.2h2.6V20h4.9v-5.4h3V20h4.9v-8.8H21z"/>',
   };
+  const escH = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  /* o.name: 핀 아래 이름(11-19 사용자 요청). o.nameKeep: 조금 축소해도 이름을 남김(다음 방문·고른 곳). 많이 축소하면 이름은 숨김(지도를 덜 가리게) */
   function iconHtml(o) {
     const s = o.size || 22, g = GLYPH[o.icon] || GLYPH.star;
     const cls = "sd-ico" + (o.ring ? " ring" : "") + (o.dim ? " dim" : "");
-    return `<div class="sd-z" style="width:${s}px;height:${s}px"><div class="${cls}" style="width:${s}px;height:${s}px;background:${o.color || "#1b5e4a"}"><svg viewBox="0 0 24 24" width="${Math.round(s * 0.64)}" height="${Math.round(s * 0.64)}" aria-hidden="true">${g}</svg></div></div>`;
+    const nm = o.name ? `<div class="sd-name${o.nameKeep ? " keep" : ""}${o.dim ? " dim" : ""}">${escH(o.name)}</div>` : "";
+    return `<div class="sd-z" style="width:${s}px;height:${s}px"><div class="${cls}" style="width:${s}px;height:${s}px;background:${o.color || "#1b5e4a"}"${o.title ? ` role="img" aria-label="${escH(o.title)}"` : ""}><svg viewBox="0 0 24 24" width="${Math.round(s * 0.64)}" height="${Math.round(s * 0.64)}" aria-hidden="true">${g}</svg></div>${nm}</div>`;
+  }
+  /* 경로선 모서리를 둥글게(11-19 사용자 요청): 꺾이는 점마다 앞뒤로 최대 r 미터 안쪽에서 곡선(2차 베지어)으로 이어 줌.
+     네이버 경로 점은 꺾이는 곳에만 있어서 회전교차로·굽은 길이 각지게 보였음. 길이 짧은 구간은 그 길이의 45%까지만 깎음 */
+  function smoothPath(c, r) {
+    if (!c || c.length < 3) return c;
+    r = r || 14;
+    const K = 111320, m = (a, b) => { const kx = K * Math.cos(a[0] * Math.PI / 180); return Math.hypot((b[0] - a[0]) * K, (b[1] - a[1]) * kx); };
+    const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    const out = [c[0]];
+    for (let k = 1; k < c.length - 1; k++) {
+      const A = c[k - 1], B = c[k], C = c[k + 1], ab = m(A, B), bc = m(B, C);
+      if (ab < 0.5 || bc < 0.5) { out.push(B); continue; }
+      // 거의 곧은 곳은 그대로
+      const v1 = [(B[0] - A[0]) / ab, (B[1] - A[1]) / ab], v2 = [(C[0] - B[0]) / bc, (C[1] - B[1]) / bc];
+      if (v1[0] * v2[0] * K * K + v1[1] * v2[1] * (K * Math.cos(B[0] * Math.PI / 180)) ** 2 > 0.995) { out.push(B); continue; }
+      const cut = Math.min(r, ab * 0.45, bc * 0.45), P = lerp(B, A, cut / ab), Q = lerp(B, C, cut / bc);
+      for (let t = 0; t <= 1.0001; t += 1 / 6) { const u = 1 - t; out.push([u * u * P[0] + 2 * u * t * B[0] + t * t * Q[0], u * u * P[1] + 2 * u * t * B[1] + t * t * Q[1]]); }
+    }
+    out.push(c[c.length - 1]);
+    return out;
   }
   const htmlOf = (o) => o.icon ? iconHtml(o) : pinHtml(o.label, o.color || "#1b5e4a", o.size, o.tip, o.badge);
   const merged = (o, opts) => ({ ...o, ...opts, label: opts.label ?? o.label, color: opts.color || o.color, badge: opts.badge === undefined ? o.badge : opts.badge });
@@ -46,7 +69,8 @@
     const nm = window.naver.maps;
     const map = new nm.Map(el, { center: new nm.LatLng(36.50, 127.26), zoom: 12, mapDataControl: false, logoControlOptions: { position: nm.Position.BOTTOM_LEFT }, zoomControl: !window.SONGDAL_NO_ZOOM });
     const items = [];
-    zoomBucket(el, map.getZoom()); nm.Event.addListener(map, "zoom_changed", (z) => zoomBucket(el, z));
+    const zl = [];
+    zoomBucket(el, map.getZoom()); nm.Event.addListener(map, "zoom_changed", (z) => { zoomBucket(el, z); zl.forEach((f) => f(z)); });
     /* 위성(겹쳐보기)에서 산의 등산로 선(overlayType 'ar')을 뺌 — 사용자 요청(11-18). 기본 겹쳐보기는 'ar.bg.ol.sw.lko'.
        나머지(배경·도로·지하철·한국어 이름)는 그대로. 안 되면 기본 겹쳐보기를 씀. */
     try {
@@ -54,7 +78,7 @@
       if (S && S.getHybridMap && map.mapTypes) map.mapTypes.set(nm.MapTypeId.HYBRID, S.getHybridMap({ overlayType: "bg.ol.sw.lko" }));
     } catch (e) {}
     return {
-      kind: "naver", raw: map,
+      kind: "naver", raw: map, zoom: () => map.getZoom(), onZoom(f) { zl.push(f); },
       marker(o) {
         const m = new nm.Marker({ map, position: new nm.LatLng(o.lat, o.lng), zIndex: o.z || 10,
           icon: { content: htmlOf(o), anchor: new nm.Point((o.size || 26) / 2, (o.size || 26) / 2) } });
@@ -65,8 +89,9 @@
       },
       polyline(coords, o) {
         o = o || {};
-        const p = new nm.Polyline({ map, path: coords.map(c => new nm.LatLng(c[0], c[1])), strokeColor: o.color || "#1b5e4a",
-          strokeWeight: o.weight || 4, strokeOpacity: o.opacity ?? 0.85, strokeStyle: o.dashed ? "shortdash" : "solid", zIndex: 5 });
+        const sm = (c) => (o.smooth === false || o.dashed ? c : smoothPath(c));
+        const p = new nm.Polyline({ map, path: sm(coords).map(c => new nm.LatLng(c[0], c[1])), strokeColor: o.color || "#1b5e4a",
+          strokeWeight: o.weight || 4, strokeOpacity: o.opacity ?? 0.85, strokeStyle: o.dashed ? "shortdash" : "solid", strokeLineCap: "round", strokeLineJoin: "round", zIndex: o.z || 5 });
         items.push(p);
         return { setPath(c) { p.setPath(c.map(x => new nm.LatLng(x[0], x[1]))); }, remove() { p.setMap(null); } };
       },
@@ -90,9 +115,10 @@
     const street = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
     const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagery © Esri" });
     const layer = L.layerGroup().addTo(map);
-    zoomBucket(el, map.getZoom()); map.on("zoomend", () => zoomBucket(el, map.getZoom()));
+    const zl = [];
+    zoomBucket(el, map.getZoom()); map.on("zoomend", () => { zoomBucket(el, map.getZoom()); zl.forEach((f) => f(map.getZoom())); });
     return {
-      kind: "osm", raw: map,
+      kind: "osm", raw: map, zoom: () => map.getZoom(), onZoom(f) { zl.push(f); },
       marker(o) {
         const size = o.size || 26;
         const m = L.marker([o.lat, o.lng], { icon: L.divIcon({ className: "", html: htmlOf({ ...o, size }), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }), zIndexOffset: (o.z || 10) * 10 }).addTo(layer);
@@ -102,7 +128,7 @@
       },
       polyline(coords, o) {
         o = o || {};
-        const p = L.polyline(coords, { color: o.color || "#1b5e4a", weight: o.weight || 4, opacity: o.opacity ?? 0.85, dashArray: o.dashed ? "6 8" : null }).addTo(layer);
+        const p = L.polyline(o.smooth === false || o.dashed ? coords : smoothPath(coords), { color: o.color || "#1b5e4a", weight: o.weight || 4, opacity: o.opacity ?? 0.85, dashArray: o.dashed ? "6 8" : null, lineCap: "round", lineJoin: "round", smoothFactor: 0.5 }).addTo(layer);
         return { setPath(c) { p.setLatLngs(c); }, remove() { layer.removeLayer(p); } };
       },
       fit(points) { if (!points.length) return; const p = pad(); map.fitBounds(points, { paddingTopLeft: [p.left, p.top], paddingBottomRight: [p.right, p.bottom] }); },
@@ -115,7 +141,7 @@
 
   /* 그리기 기록을 남겨 두었다가, 네이버 인증이 늦게 실패하면 OpenStreetMap 으로 갈아타서 다시 그립니다. */
   function recorder(el, first, opts) {
-    let impl = first, ops = [], swapped = false, mapType = "normal";
+    let impl = first, ops = [], swapped = false, mapType = "normal"; const zoomFns = [];
     const handles = [];
     function run(op) {
       if (op.t === "marker") { op.h.inner = impl.marker(op.o); if (op.h.state) op.h.inner.set(op.h.state); }
@@ -126,6 +152,8 @@
     const api = {
       get kind() { return impl.kind; },
       get raw() { return impl.raw; },   // 시험·점검용(확대 수준 바꾸기 등)
+      zoom() { return impl.zoom ? impl.zoom() : 14; },
+      onZoom(f) { zoomFns.push(f); if (impl.onZoom) impl.onZoom(f); },   // 확대 수준이 바뀌면 부름(겹친 경로선 간격 다시 계산)
       marker(o) { const h = { inner: null, state: null, set(x) { h.state = x; h.inner && h.inner.set(x); }, move(lat, lng) { o.lat = lat; o.lng = lng; h.inner && h.inner.move && h.inner.move(lat, lng); }, remove() { h.inner && h.inner.remove(); ops = ops.filter((q) => q.h !== h); } }; const op = { t: "marker", o, h }; ops.push(op); run(op); return h; },
       polyline(c, o) { const h = { inner: null, setPath(nc) { op.c = nc; h.inner && h.inner.setPath && h.inner.setPath(nc); }, remove() { h.inner && h.inner.remove(); ops = ops.filter((q) => q.h !== h); } }; const op = { t: "polyline", c, o, h }; ops.push(op); run(op); return h; },
       fit(p) { ops = ops.filter((q) => q.t !== "fit" && q.t !== "center"); const op = { t: "fit", p }; ops.push(op); run(op); },
@@ -141,6 +169,7 @@
         const fresh = document.createElement("div"); fresh.style.cssText = "width:100%;height:100%"; el.appendChild(fresh);
         try { impl = await leafletMap(fresh); } catch (e) { impl = noneMap(el); }
         if (mapType !== "normal") impl.setType(mapType);
+        if (impl.onZoom) zoomFns.forEach((f) => impl.onZoom(f));
         const replay = ops.slice(); replay.forEach(run);
         if (opts.onFallback) opts.onFallback(reason);
       },
@@ -150,7 +179,7 @@
   function noneMap(el) {
     el.innerHTML = '<div style="padding:20px;color:#6b6b66;font-size:13px">지도를 불러오지 못했어요 (인터넷 연결을 확인하세요). 순서표는 아래에서 볼 수 있어요.</div>';
     const noop = () => ({ set() {}, move() {}, setPath() {}, remove() {} });
-    return { kind: "none", marker: noop, polyline: noop, fit() {}, center() {}, clear() {}, resize() {}, setType() {} };
+    return { kind: "none", zoom: () => 14, marker: noop, polyline: noop, fit() {}, center() {}, clear() {}, resize() {}, setType() {} };
   }
 
   function dist(a, b) { const R = 6371000, r = Math.PI / 180, dLa = (b[0] - a[0]) * r, dLo = (b[1] - a[1]) * r; const h = Math.sin(dLa / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.min(1, Math.sqrt(h))); }
@@ -197,6 +226,9 @@
           + ".sd-ico.ring{box-shadow:0 0 0 3px rgba(255,255,255,.95),0 0 0 6px rgba(27,94,74,.55),0 2px 6px rgba(0,0,0,.4)}.sd-ico.dim{opacity:.55;filter:grayscale(.85)}"
           + "[data-zb=mid] .sd-ico{transform:scale(.78)}[data-zb=far] .sd-ico{transform:scale(.56)}[data-zb=far] .sd-ico.ring{transform:scale(.75)}"
           + "@media (prefers-reduced-motion: reduce){.sd-ico{transition:none}}"
+          + ".sd-z{position:relative}.sd-name{position:absolute;left:50%;top:calc(100% + 1px);transform:translateX(-50%);white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis;pointer-events:none;"
+          + "font:700 12px/1.25 -apple-system,'Apple SD Gothic Neo',system-ui,sans-serif;color:#1d1d1b;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff,0 0 4px #fff;letter-spacing:-.2px}"
+          + ".sd-name.dim{color:#77776f}[data-zb=mid] .sd-name{top:calc(89% + 1px)}[data-zb=mid] .sd-name:not(.keep),[data-zb=far] .sd-name{display:none}"
           + ".sd-pin{border-radius:50%;color:#fff;font-weight:700;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.4);border:2px solid #fff;box-sizing:border-box;font-family:-apple-system,system-ui,sans-serif;cursor:pointer}"
           + ".sd-badge{position:absolute;right:-7px;top:-7px;min-width:15px;height:15px;line-height:13px;border-radius:8px;background:#fff;border:1px solid currentColor;font:700 9.5px/13px -apple-system,'Apple SD Gothic Neo',system-ui,sans-serif;text-align:center;padding:0 1px;box-sizing:border-box;pointer-events:none}"
           + ".sd-wrap{position:relative}.sd-tip{display:none;position:absolute;left:50%;bottom:calc(100% + 10px);transform:translateX(-50%);background:#fff;color:#1d1d1b;border-radius:10px;padding:8px 11px;box-shadow:0 3px 14px rgba(0,0,0,.28);white-space:nowrap;font:13px/1.45 -apple-system,'Apple SD Gothic Neo',system-ui,sans-serif;text-align:left;pointer-events:none;z-index:10}"
