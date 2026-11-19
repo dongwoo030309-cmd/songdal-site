@@ -6,7 +6,12 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="송달">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1b5e4a">
+<!-- 홈 화면에 추가하면 앱처럼(주소창 없이) 열림 — 아이콘·앱 설정 (11-20, FigCraft 로 만든 아이콘) -->
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <title>송달 방문표</title>
 <link rel="stylesheet" href="style.css">
 <script src="config.js" onerror="window.SONGDAL_CONFIG={}"></script>
@@ -54,10 +59,11 @@
     <div id="list" class="list hidden"></div>
   </section>
   <div class="sheet-foot" aria-hidden="true"></div>
+  <div id="est-chip" class="est-chip hidden" aria-hidden="true">┄ 점선 = 직선 추정</div>
   <nav class="dock" aria-label="메뉴">
     <button id="btn-card" class="on"><i>▤</i><span>카드</span></button>
     <button id="btn-list"><i>☰</i><span>목록</span></button>
-    <button id="btn-dock-recalc"><i>🔄</i><span>재계산</span></button>
+    <button id="btn-dock-recalc"><i>↻</i><span>재계산</span></button>
     <button id="btn-dock-undo"><i>↶</i><span>되돌리기</span></button>
   </nav>
 </div>
