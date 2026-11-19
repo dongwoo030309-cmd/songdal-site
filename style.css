@@ -402,3 +402,11 @@ body.note-on.reo-bar-on .app.listing #note { bottom: calc(var(--foot) + 8px); }
 /* B1 직선 추정 표(점선 구간이 지도에 있을 때만) — 오른쪽 지도 단추와 같은 높이, 왼쪽 */
 .est-chip { position: fixed; left: 12px; bottom: calc(var(--foot) + var(--sheet-h) + 14px); z-index: 1200; padding: 5px 11px; border-radius: 14px; background: rgba(255,255,255,.95); color: #55554f; font-size: 12px; font-weight: 600; box-shadow: 0 1px 6px rgba(0,0,0,.2); pointer-events: none; }
 .app.listing .est-chip { display: none; }
+/* 11-20 GPT FigCraft 보드 4·5·6 반영 */
+.rv-stats { grid-template-columns: 1fr 1fr; }
+.rv-stats .wide { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 10px; }
+.rv-stats .wide small { flex: none; } .rv-stats .wide b { white-space: normal; }
+.list .q-note b { color: var(--g); }
+.list .q-empty { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 2px 0 8px; padding: 8px 10px; border-radius: 10px; background: #f6f6f2; font-size: 14px; color: var(--ink); }
+.list .q-empty button { min-height: 44px; padding: 0 14px; white-space: nowrap; }
+.next .act #btn-skip { border-color: #8f8f88; color: #2f2f2b; }   /* 회색이라 못 누르는 단추처럼 보이지 않게 테두리·글자 진하게 */
