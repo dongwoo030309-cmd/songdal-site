@@ -35,10 +35,17 @@
   const escH = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   /* o.name: 핀 아래 이름(11-19 사용자 요청). o.nameKeep: 조금 축소해도 이름을 남김(다음 방문·고른 곳). 많이 축소하면 이름은 숨김(지도를 덜 가리게) */
   function iconHtml(o) {
+    if (o.icon === "arrow") {   // 경로 방향 화살표(11-19): rot = 북쪽에서 시계 방향 각도. 누를 수 없음. o.dim = 다음 구간이 아닌 화살표(작고 옅게, 11-20)
+      const a = o.size || 16;
+      return `<div class="sd-arrow" aria-hidden="true" style="width:${a}px;height:${a}px;transform:rotate(${Math.round(o.rot || 0)}deg)${o.dim ? ";opacity:.6" : ""}"><svg viewBox="0 0 24 24" width="${a}" height="${a}" aria-hidden="true"><path d="M12 3 20 20 12 15.5 4 20z" fill="${o.color || "#1b5e4a"}" stroke="#fff" stroke-width="2.2" stroke-linejoin="round"/></svg></div>`;
+    }
     const s = o.size || 22, g = GLYPH[o.icon] || GLYPH.star;
     const cls = "sd-ico" + (o.ring ? " ring" : "") + (o.dim ? " dim" : "");
-    const nm = o.name ? `<div class="sd-name${o.nameKeep ? " keep" : ""}${o.dim ? " dim" : ""}">${escH(o.name)}</div>` : "";
-    return `<div class="sd-z" style="width:${s}px;height:${s}px"><div class="${cls}" style="width:${s}px;height:${s}px;background:${o.color || "#1b5e4a"}"${o.title ? ` role="img" aria-label="${escH(o.title)}"` : ""}><svg viewBox="0 0 24 24" width="${Math.round(s * 0.64)}" height="${Math.round(s * 0.64)}" aria-hidden="true">${g}</svg></div>${nm}</div>`;
+    const nm = o.name ? `<div class="sd-name${o.nameKeep ? " keep" : ""}${o.dim ? " dim" : ""}" aria-hidden="true">${escH(o.name)}</div>` : "";   // 이름은 핀 낭독 이름(title)에 이미 있음 → 두 번 읽히지 않게
+    // o.num: 별 대신 서류 번호(아이폰 다음 방문 핀, 11-20 시안 B1 — 카드의 서류 번호와 같은 색·숫자)
+    const inner = o.num != null ? `<span class="sd-num" style="font-size:${String(o.num).length > 2 ? Math.round(s * 0.36) : Math.round(s * 0.46)}px" aria-hidden="true">${escH(o.num)}</span>`
+      : `<svg viewBox="0 0 24 24" width="${Math.round(s * 0.64)}" height="${Math.round(s * 0.64)}" aria-hidden="true">${g}</svg>`;
+    return `<div class="sd-z" style="width:${s}px;height:${s}px"><div class="${cls}" style="width:${s}px;height:${s}px;background:${o.color || "#1b5e4a"}"${o.title ? ` role="img" aria-label="${escH(o.title)}"` : ""}>${inner}</div>${nm}</div>`;
   }
   /* 경로선 모서리를 둥글게(11-19 사용자 요청): 꺾이는 점마다 앞뒤로 최대 r 미터 안쪽에서 곡선(2차 베지어)으로 이어 줌.
      네이버 경로 점은 꺾이는 곳에만 있어서 회전교차로·굽은 길이 각지게 보였음. 길이 짧은 구간은 그 길이의 45%까지만 깎음 */
@@ -60,6 +67,74 @@
     out.push(c[c.length - 1]);
     return out;
   }
+  /* 같은 길을 두 번 이상 지나가면 선이 겹쳐 순서를 알아보기 어려웠음(11-19 사용자 요청, 아이폰·맥 공통) →
+     앞 구간이 이미 지나간 자리를 다시 지나가는 부분만 진행 방향 오른쪽으로 화면 5px씩 비켜 그림(겹칠 때마다 한 단계, 최대 3단계).
+     우측 통행이라 갔다가 같은 길로 되돌아오는 구간은 양쪽으로 갈라짐. 간격은 화면 픽셀 기준이라 확대 수준이 바뀌면 다시 계산(onZoom) */
+  function spreadLegs(legs, zoom) {
+    const lat0 = (legs.find((L) => L.coords.length) || { coords: [[36.5, 127.3]] }).coords[0][0];
+    const K = 111320, kx = K * Math.cos(lat0 * Math.PI / 180), mpp = 156543.03 * Math.cos(lat0 * Math.PI / 180) / Math.pow(2, zoom || 14);
+    const step = 12, gy = 14 / K, gx = 14 / kx, used = new Map();
+    const key = (y, x) => y + ":" + x, cy = (p) => Math.round(p[0] / gy), cx = (p) => Math.round(p[1] / gx);
+    // 칸마다 지나간 방향(단위 벡터)을 기억 — 같은 길(나란하거나 반대 방향)만 겹침으로 셈. 직각으로 건너는 길은 안 셈 (11-19 GPT 검토)
+    const near = (p, v) => { const y = cy(p), x = cx(p); let n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const arr = used.get(key(y + dy, x + dx)); if (arr) n = Math.max(n, arr.filter((u) => Math.abs(u[0] * v[0] + u[1] * v[1]) > 0.8).length); }
+      return n; };
+    return legs.map((L) => {
+      if (!L.real || L.coords.length < 2) return L;
+      const d = [L.coords[0]];   // 12m 간격으로 촘촘하게
+      for (let k = 1; k < L.coords.length; k++) {
+        const a = L.coords[k - 1], b = L.coords[k], n = Math.max(1, Math.ceil(Math.hypot((b[0] - a[0]) * K, (b[1] - a[1]) * kx) / step));
+        for (let t = 1; t <= n; t++) d.push([a[0] + (b[0] - a[0]) * t / n, a[1] + (b[1] - a[1]) * t / n]);
+      }
+      const dir = d.map((_, k) => { const a = d[Math.max(0, k - 1)], b = d[Math.min(d.length - 1, k + 1)], vy = (b[0] - a[0]) * K, vx = (b[1] - a[1]) * kx, n = Math.hypot(vx, vy) || 1; return [vx / n, vy / n]; });
+      // 출발·도착 지점 바로 옆(약 25m)은 앞 구간과 만나는 자리라 겹침으로 세지 않음
+      const lv = d.map((p, k) => (k < 2 || k > d.length - 3 ? 0 : Math.min(3, near(p, dir[k]))));
+      // 3점(약 36m)보다 짧게 겹치는 곳은 겹침으로 안 봄(교차로를 잠깐 함께 지나는 것)
+      for (let k = 0; k < lv.length;) { if (!lv[k]) { k++; continue; } let e = k; while (e < lv.length && lv[e]) e++; if (e - k < 3) for (let j = k; j < e; j++) lv[j] = 0; k = e; }
+      const mine = new Map(); d.forEach((p, k) => { const c = key(cy(p), cx(p)); if (!mine.has(c)) mine.set(c, dir[k]); });
+      mine.forEach((v, c) => { const arr = used.get(c) || []; if (arr.length < 6) arr.push(v); used.set(c, arr); });
+      if (!lv.some((x) => x)) return L;
+      const last = d.length - 1;
+      const sm = lv.map((_, k) => { let t = 0, n = 0; for (let j = k - 5; j <= k + 5; j++) if (j >= 0 && j < lv.length) { t += lv[j]; n++; } return (t / n) * Math.min(1, k / 3, (last - k) / 3); });   // 단계가 바뀌는 곳은 약 60m에 걸쳐 서서히, 양 끝은 핀 자리에 그대로
+      const off = 5 * mpp;
+      const coords = d.map((p, k) => {
+        if (!sm[k]) return p;
+        const a = d[Math.max(0, k - 1)], b = d[Math.min(d.length - 1, k + 1)], vy = (b[0] - a[0]) * K, vx = (b[1] - a[1]) * kx, len = Math.hypot(vx, vy) || 1;
+        return [p[0] - (vx / len) * off * sm[k] / K, p[1] + (vy / len) * off * sm[k] / kx];   // 진행 방향 오른쪽(동=vy, 북=-vx)
+      });
+      return { ...L, coords, spread: true };
+    });
+  }
+  /* 구간 방향 화살표 위치(11-19 사용자 요청 · GPT 상의): 화면에서 60px 이상인 구간 가운데에 하나. → [{lat, lng, rot, b}] */
+  function legArrows(legs, zoom) {
+    const out = [];
+    legs.forEach((L) => {
+      const c = L.coords; if (!c || c.length < 2) return;
+      const lat0 = c[0][0], K = 111320, kx = K * Math.cos(lat0 * Math.PI / 180), mpp = 156543.03 * Math.cos(lat0 * Math.PI / 180) / Math.pow(2, zoom || 14);
+      const seg = []; let tot = 0;
+      for (let k = 1; k < c.length; k++) { const d = Math.hypot((c[k][0] - c[k - 1][0]) * K, (c[k][1] - c[k - 1][1]) * kx); seg.push(d); tot += d; }
+      if (tot / mpp < 60) return;
+      let half = tot / 2, k = 0; while (k < seg.length - 1 && half > seg[k]) { half -= seg[k]; k++; }
+      const a = c[k], b = c[k + 1], u = seg[k] ? half / seg[k] : 0;
+      out.push({ lat: a[0] + (b[0] - a[0]) * u, lng: a[1] + (b[1] - a[1]) * u, rot: Math.atan2((b[1] - a[1]) * kx, (b[0] - a[0]) * K) * 180 / Math.PI, b: L.b, real: L.real });
+    });
+    return out;
+  }
+  /* 핀 아래 이름 겹침(11-20 시안 B1): items = [{lat, lng, name, size}] (앞쪽이 먼저 자리 잡음 — 다음 방문·고른 곳을 앞에).
+     화면 픽셀로 이름 상자를 어림해서, 앞에 자리 잡은 이름과 겹치는 이름은 숨기고 그 이름에 '외 N곳'으로 셈. → [{show, extra}] (items 순서 그대로) */
+  function nameLayout(items, zoom) {
+    const lat0 = (items[0] && items[0].lat) || 36.5, K = 111320, kx = K * Math.cos(lat0 * Math.PI / 180), mpp = 156543.03 * Math.cos(lat0 * Math.PI / 180) / Math.pow(2, zoom || 14);
+    const kept = [], out = items.map(() => ({ show: false, extra: 0 }));
+    items.forEach((it, n) => {
+      if (!it.name) return;
+      const w = Math.min(170, String(it.name).length * 12.5 + 4), x = it.lng * kx / mpp, y = -it.lat * K / mpp + (it.size || 22) / 2 + 1;
+      const box = { l: x - w / 2, r: x + w / 2, t: y, b: y + 16, n };
+      const hit = kept.find((k) => box.l < k.r + 2 && k.l < box.r + 2 && box.t < k.b + 1 && k.t < box.b + 1);
+      if (hit) { out[hit.n].extra++; return; }
+      kept.push(box); out[n].show = true;
+    });
+    return out;
+  }
   const htmlOf = (o) => o.icon ? iconHtml(o) : pinHtml(o.label, o.color || "#1b5e4a", o.size, o.tip, o.badge);
   const merged = (o, opts) => ({ ...o, ...opts, label: opts.label ?? o.label, color: opts.color || o.color, badge: opts.badge === undefined ? o.badge : opts.badge });
   /* 지도를 축소하면 아이콘 핀도 작게 (지도를 덜 가리게, 11-18 사용자 요청) — 확대 수준을 지도 칸에 data-zb 로 표시하고 CSS 가 크기를 줄임 */
@@ -79,8 +154,10 @@
     } catch (e) {}
     return {
       kind: "naver", raw: map, zoom: () => map.getZoom(), onZoom(f) { zl.push(f); },
+      inView(lat, lng, m) { const b = map.getBounds(), ne = b.getNE(), sw = b.getSW(), dy = (ne.lat() - sw.lat()) * (m || 0), dx = (ne.lng() - sw.lng()) * (m || 0); return lat < ne.lat() - dy && lat > sw.lat() + dy && lng < ne.lng() - dx && lng > sw.lng() + dx; },
+      panTo(lat, lng) { map.panTo(new nm.LatLng(lat, lng), { duration: 400 }); },
       marker(o) {
-        const m = new nm.Marker({ map, position: new nm.LatLng(o.lat, o.lng), zIndex: o.z || 10,
+        const m = new nm.Marker({ map, position: new nm.LatLng(o.lat, o.lng), zIndex: o.z || 10, clickable: !!(o.onClick || o.tip),   // 화살표·출발 핀처럼 누를 일 없는 것은 누름 대상에서 뺌(11-20)
           icon: { content: htmlOf(o), anchor: new nm.Point((o.size || 26) / 2, (o.size || 26) / 2) } });
         if (o.onClick) nm.Event.addListener(m, "click", () => o.onClick(o));
         if (o.tip) { nm.Event.addListener(m, "mouseover", () => m.setZIndex(5000)); nm.Event.addListener(m, "mouseout", () => m.setZIndex(m.__z || o.z || 10)); }
@@ -119,9 +196,14 @@
     zoomBucket(el, map.getZoom()); map.on("zoomend", () => { zoomBucket(el, map.getZoom()); zl.forEach((f) => f(map.getZoom())); });
     return {
       kind: "osm", raw: map, zoom: () => map.getZoom(), onZoom(f) { zl.push(f); },
+      inView(lat, lng, m) { const b = map.getBounds(), ne = b.getNorthEast(), sw = b.getSouthWest(), dy = (ne.lat - sw.lat) * (m || 0), dx = (ne.lng - sw.lng) * (m || 0); return lat < ne.lat - dy && lat > sw.lat + dy && lng < ne.lng - dx && lng > sw.lng + dx; },
+      panTo(lat, lng) { map.panTo([lat, lng], { animate: true, duration: 0.4 }); },
       marker(o) {
         const size = o.size || 26;
-        const m = L.marker([o.lat, o.lng], { icon: L.divIcon({ className: "", html: htmlOf({ ...o, size }), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }), zIndexOffset: (o.z || 10) * 10 }).addTo(layer);
+        // 누를 수 있는 핀만 누름·키보드 대상(이름 = title), 화살표 등은 화면 낭독·누름에서 뺌 (11-20 GPT 건의)
+        const act = !!(o.onClick || o.tip);
+        const m = L.marker([o.lat, o.lng], { icon: L.divIcon({ className: "", html: htmlOf({ ...o, size }), iconSize: [size, size], iconAnchor: [size / 2, size / 2] }), zIndexOffset: (o.z || 10) * 10,
+          interactive: act, keyboard: act, ...(act && o.title ? { title: o.title } : {}) }).addTo(layer);
         if (o.onClick) m.on("click", () => o.onClick(o));
         if (o.tip) { m.on("mouseover", () => m.setZIndexOffset(50000)); m.on("mouseout", () => m.setZIndexOffset((m.__z || o.z || 10) * 10)); }
         return { set(opts) { const q = merged(o, opts), s = q.size || size; m.setIcon(L.divIcon({ className: "", html: htmlOf({ ...q, size: s }), iconSize: [s, s], iconAnchor: [s / 2, s / 2] })); m.__z = opts.z || o.z || 10; m.setZIndexOffset(m.__z * 10); }, move(lat, lng) { m.setLatLng([lat, lng]); }, remove() { layer.removeLayer(m); } };
@@ -153,6 +235,8 @@
       get kind() { return impl.kind; },
       get raw() { return impl.raw; },   // 시험·점검용(확대 수준 바꾸기 등)
       zoom() { return impl.zoom ? impl.zoom() : 14; },
+      inView(lat, lng, m) { try { return impl.inView ? impl.inView(lat, lng, m) : true; } catch (e) { return true; } },   // 화면 가장자리 m(비율) 안쪽에 보이는지
+      panTo(lat, lng) { if (impl.panTo) impl.panTo(lat, lng); },   // 확대 수준은 그대로 두고 옮김
       onZoom(f) { zoomFns.push(f); if (impl.onZoom) impl.onZoom(f); },   // 확대 수준이 바뀌면 부름(겹친 경로선 간격 다시 계산)
       marker(o) { const h = { inner: null, state: null, set(x) { h.state = x; h.inner && h.inner.set(x); }, move(lat, lng) { o.lat = lat; o.lng = lng; h.inner && h.inner.move && h.inner.move(lat, lng); }, remove() { h.inner && h.inner.remove(); ops = ops.filter((q) => q.h !== h); } }; const op = { t: "marker", o, h }; ops.push(op); run(op); return h; },
       polyline(c, o) { const h = { inner: null, setPath(nc) { op.c = nc; h.inner && h.inner.setPath && h.inner.setPath(nc); }, remove() { h.inner && h.inner.remove(); ops = ops.filter((q) => q.h !== h); } }; const op = { t: "polyline", c, o, h }; ops.push(op); run(op); return h; },
@@ -200,7 +284,7 @@
         last = now; const d = f * L.len; let j = 1; while (j < L.cum.length && L.cum[j] < d) j++;
         const a = L.coords[j - 1], b = L.coords[Math.min(j, L.coords.length - 1)], seg = (L.cum[j] ?? L.len) - L.cum[j - 1];
         const u = seg > 0 ? (d - L.cum[j - 1]) / seg : 1; const p = [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u];
-        cur.setPath(L.coords.slice(0, j).concat([p])); head.move(p[0], p[1]);
+        cur.setPath(L.coords.slice(0, j).concat([p])); head.move(p[0], p[1]); if (opts.onMove) opts.onMove(p, k, f);
       }
       if (f === 1) {
         cur.setPath(L.coords); if (opts.onArrive) opts.onArrive(k);
@@ -215,7 +299,7 @@
   }
 
   window.SongdalMap = {
-    animate,
+    animate, spreadLegs, smoothPath, legArrows, nameLayout,
     _pinHtml: pinHtml,   // 화면 점검용
     badge(rule) { return { "오전": "오", "주간": "주", "야간": "야", "휴일": "휴" }[rule] || ""; },
     async create(el, opts) {
@@ -226,7 +310,9 @@
           + ".sd-ico.ring{box-shadow:0 0 0 3px rgba(255,255,255,.95),0 0 0 6px rgba(27,94,74,.55),0 2px 6px rgba(0,0,0,.4)}.sd-ico.dim{opacity:.55;filter:grayscale(.85)}"
           + "[data-zb=mid] .sd-ico{transform:scale(.78)}[data-zb=far] .sd-ico{transform:scale(.56)}[data-zb=far] .sd-ico.ring{transform:scale(.75)}"
           + "@media (prefers-reduced-motion: reduce){.sd-ico{transition:none}}"
-          + ".sd-z{position:relative}.sd-name{position:absolute;left:50%;top:calc(100% + 1px);transform:translateX(-50%);white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis;pointer-events:none;"
+          + ".sd-arrow{pointer-events:none;filter:drop-shadow(0 1px 1px rgba(0,0,0,.35))}"
+          + ".sd-num{color:#fff;font:800 13px/1 -apple-system,'Apple SD Gothic Neo',system-ui,sans-serif;letter-spacing:-.5px}"
+          + ".sd-z{position:relative}.sd-name{position:absolute;left:50%;top:calc(100% + 1px);transform:translateX(-50%);white-space:nowrap;max-width:170px;overflow:hidden;text-overflow:ellipsis;pointer-events:none;"
           + "font:700 12px/1.25 -apple-system,'Apple SD Gothic Neo',system-ui,sans-serif;color:#1d1d1b;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff,0 0 4px #fff;letter-spacing:-.2px}"
           + ".sd-name.dim{color:#77776f}[data-zb=mid] .sd-name{top:calc(89% + 1px)}[data-zb=mid] .sd-name:not(.keep),[data-zb=far] .sd-name{display:none}"
           + ".sd-pin{border-radius:50%;color:#fff;font-weight:700;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.4);border:2px solid #fff;box-sizing:border-box;font-family:-apple-system,system-ui,sans-serif;cursor:pointer}"
