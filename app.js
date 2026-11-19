@@ -219,6 +219,7 @@ function loadDone() {
   let tries = read("_tries", {}); if (!tries || typeof tries !== "object") tries = {};   // 재방문 전의 방문 기록 {순번: [{at, res}]}
   const samePerm = (o) => Array.isArray(o) && o.length === valid.size && new Set(o).size === o.length && o.every((i) => valid.has(i));
   S.carried = null;
+  const extra = [];   // 기록과 함께 한 번에 저장할 칸
   // 앞 방문표에서 옮겨 온 기록 {곳 열쇠: 마침 시각} — 목록에 '↺ 앞 방문표에서' 표시용(11-20 시안 B4). 아이폰 안에만 두고 맥으로 보내지 않음
   let from = read("_from", {}); if (!from || typeof from !== "object") from = {};
   if (meta && (meta.sig !== planSig() || !sameKeys(meta.keys, planKeys()))) {
@@ -258,10 +259,10 @@ function loadDone() {
       if (same) { same.done = { ...(same.done || {}), ...gone.done }; same.res = { ...(same.res || {}), ...gone.res }; same.tries = { ...(same.tries || {}), ...gone.tries }; }
       else keep.push(gone);
     }
-    try { if (keep.length) localStorage.setItem(storeKey() + "_prev", JSON.stringify(keep)); else localStorage.removeItem(storeKey() + "_prev"); } catch (e) {}
     tries = movedTries; done = moved; res = movedRes; order = null; hist = []; S.carried = { kept: kept + restored, lost };
     from = {}; Object.keys(moved).forEach((ni) => { const st = stopOf(+ni); if (st && moved[ni]) from[keyOf(st)] = moved[ni]; });
-    try { localStorage.setItem(storeKey() + "_from", JSON.stringify(from)); } catch (e) {}
+    // 보관 묶음(_prev)·옮김 표시(_from)는 옮긴 기록과 '같이' 저장(아래 saveDone) — 먼저 보관 묶음에서 지웠다가 기록 저장이 실패하면 기록이 사라졌음 (11-20 GPT 지적)
+    extra.push([storeKey() + "_prev", keep.length ? JSON.stringify(keep) : null], [storeKey() + "_from", JSON.stringify(from)]);
   } else if (!meta && order && (!samePerm(order) || S.samePlanText === false)) {
     // 예전 방식 기록(곳 정보 없음)인데 방문표가 다시 올라왔거나 달라짐: 어느 곳의 마침인지 알 수 없어 옮기지 않음
     // (곳 수가 같아도 구성이 다를 수 있어서, 받은 방문표가 지난번과 글자까지 같을 때만 그대로 둠)
@@ -275,15 +276,30 @@ function loadDone() {
   Object.keys(res).forEach((i) => { if (!done[i] || !RESULTS[res[i]]) delete res[i]; });
   Object.keys(tries).forEach((i) => { if (!valid.has(+i) || !Array.isArray(tries[i]) || !tries[i].length) delete tries[i]; });
   S.done = done; S.res = res; S.tries = tries; S.order = order; S.history = Array.isArray(hist) ? hist : [];
-  if (S.carried || !meta) { try { saveDone(S.carried ? undefined : "quiet"); } catch (e) {} }
+  if (S.carried || !meta) saveDone(S.carried ? undefined : "quiet", extra);
 }
-function saveDone(quiet) {
-  localStorage.setItem(storeKey() + "_res", JSON.stringify(S.res || {}));
-  localStorage.setItem(storeKey() + "_tries", JSON.stringify(S.tries || {}));
-  localStorage.setItem(storeKey(), JSON.stringify(S.done)); localStorage.setItem(storeKey() + "_order", JSON.stringify(S.order));
-  localStorage.setItem(storeKey() + "_hist", JSON.stringify(S.history || []));
-  localStorage.setItem(storeKey() + "_plan", JSON.stringify({ sig: planSig(), keys: planKeys() }));
+/* 여러 칸을 '전부 아니면 하나도 안' 저장 (11-20 GPT 지적): 아이폰 저장 공간이 꽉 차 중간에 실패하면 기록은 새 것·방문표 대응 정보(_plan)는
+   옛 것으로 섞여, 다음에 열 때 기록이 다른 곳(다른 수취인)에 붙을 수 있었음 → 실패하면 이번에 쓴 칸을 모두 전의 값으로 되돌림.
+   pairs = [[칸 이름, 문자열 또는 null(지움)]] → 성공 여부 */
+function saveAll(pairs) {
+  const old = pairs.map(([k]) => [k, localStorage.getItem(k)]);
+  try { pairs.forEach(([k, v]) => (v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v))); return true; }
+  catch (e) {
+    pairs.forEach(([k]) => { try { localStorage.removeItem(k); } catch (_) {} });          // 먼저 비워서 자리를 만든 뒤
+    old.forEach(([k, v]) => { try { if (v != null) localStorage.setItem(k, v); } catch (_) {} });   // 전의 값으로(전에 다 들어가 있던 크기)
+    return false;
+  }
+}
+function saveDone(quiet, extra) {
+  const K = storeKey();
+  const pairs = (hist) => [[K + "_res", JSON.stringify(S.res || {})], [K + "_tries", JSON.stringify(S.tries || {})], [K, JSON.stringify(S.done)],
+    [K + "_order", JSON.stringify(S.order)], [K + "_hist", hist], [K + "_plan", JSON.stringify({ sig: planSig(), keys: planKeys() })], ...(extra || [])];
+  // 되돌리기 목록이 커서 안 들어가면 그것만 비우고 한 번 더(기록·대응 정보가 더 중요)
+  const ok = saveAll(pairs(JSON.stringify(S.history || []))) || (!!(S.history || []).length && saveAll(pairs("[]")));
+  S.saveFailed = !ok;
+  if (!ok && typeof toast === "function") toast("⚠ 아이폰 저장 공간이 부족해 기록을 이 아이폰에 저장하지 못했어요. 맥으로 자동 저장은 계속 시도해요. 이 화면을 닫기 전에 맥에서 결과가 들어왔는지 확인해 주세요.", null, null, 15000);
   if (quiet !== "quiet") scheduleSync();
+  return ok;
 }
 /* 바꾸기 직전 상태를 남겨 두면 '되돌리기'로 그대로 돌아감 (마침·미루기·순서 바꾸기·취소 모두) */
 function snapshot(label) { S.redo = []; S.history = S.history || []; S.history.push({ done: { ...S.done }, res: { ...(S.res || {}) }, tries: JSON.parse(JSON.stringify(S.tries || {})), order: [...S.order], label }); if (S.history.length > 50) S.history.shift(); }
