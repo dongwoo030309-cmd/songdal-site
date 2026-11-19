@@ -140,10 +140,11 @@ function askRevisit(i) {
     ${rec.allOver ? `<div class="rv-cond late">⚠ 어느 자리에 넣어도 <b>전체 일정</b>이 퇴근 기한(${hhmm(S.plan.return_by)})을 넘겨요. 직접 정한 시간을 먼저 지키고, 넘기는 곳이 가장 적은 자리를 추천해요.</div>` : ""}
     ${opts.length > 1 ? `<div class="rv-slots" role="radiogroup" aria-label="넣을 자리">${opts.map((o) => `<button class="slot${o === cur ? " on" : ""}" role="radio" aria-checked="${o === cur}" data-k="${o.key}">${esc(o.label)}</button>`).join("")}</div>` : ""}
     <!-- 11-20 FigCraft 시안 B5: '이곳 도착 · 전체 마침 · 기한 넘김' 세 칸 — 무엇이 늦는지 나눠서 -->
+    <!-- 11-20 GPT FigCraft 보드 4: 이곳 도착·전체 마침은 두 칸, 기한 넘김은 아래 한 줄 전체 폭(좁은 칸에서 '3시간 58분'이 잘렸음) -->
     <div class="rv-stats">
       <div><small>${pr.pos}번째 · 이곳 도착</small><b>${r ? hhmm(r.arrive) : "—"}</b>${r && r.wait > 60 ? `<em>${hhmm(r.begin)}부터 송달</em>` : ""}</div>
       <div><small>전체 마침</small><b>${pr.finish ? hhmm(pr.finish) : "—"}</b></div>
-      <div class="${pr.ok ? "ok" : "bad"}"><small>기한 넘김</small><b>${pr.ok ? "없음" : `${pr.over ? `${pr.over}곳 · ` : ""}${hmLong(Math.max(0, pr.finish - S.plan.return_by))}`}</b></div>
+      <div class="wide ${pr.ok ? "ok" : "bad"}"><small>기한 넘김</small><b>${pr.ok ? "없음" : `${pr.over ? `${pr.over}곳 · ` : ""}${hmLong(Math.max(0, pr.finish - S.plan.return_by))}`}</b></div>
     </div>
     ${cur.key !== "rec" ? `<div class="hint">추천 자리는 ${rec.pos}번째예요(${rec.allOver ? "직접 정한 시간 → 기한 넘기는 곳 수 → 끝나는 시각 → 운전" : "시간 조건 → 끝나는 시각 → 운전"} 순으로 고름).</div>` : ""}
     ${condHtml(r)}
@@ -296,6 +297,7 @@ function undo() {
   restore(h); toast("되돌렸어요: " + h.label, "다시 하기", redo, 10000);
 }
 function redo() {
+  if (S.showList && S.reorder) { toast("순서 편집 중에는 기록을 다시 할 수 없어요. 먼저 [적용] 또는 [취소]를 눌러 주세요."); return; }   // 11-20 GPT 지적: 되돌리기만 잠갔었음
   const r = (S.redo || []).pop(); if (!r) return;
   S.history = S.history || []; S.history.push(stateNow(r.label));
   restore(r); toast("다시 했어요: " + r.label, "되돌리기", undo, 8000);
@@ -425,7 +427,7 @@ function render() {
         <div class="actions3">
           <button class="ghost warn" id="btn-absent">부재</button>
           <button class="ghost warn" id="btn-addr">주소 문제</button>
-          <button class="ghost" id="btn-skip">${isNext ? "순서 미루기" : "이 건부터"}</button>
+          <button class="ghost" id="btn-skip">${isNext ? "뒤로 미루기 →" : "이 건부터"}</button>
         </div>
       </div>
       <!-- 버튼이 항상 먼저 보이게: 시간·조건 정보는 버튼 아래 -->
@@ -638,7 +640,15 @@ function renderList(etas) {
     <div class="sum">${esc(countsText(cnt))} · 남음 ${rem.length}${rem.length >= 2 ? ` <button class="ghost reo-on" id="reo-on">✎ 순서 편집</button>` : ""}</div>`;
   if ($("reo-on")) $("reo-on").onclick = () => { S.reorder = true; S.ghost = null; render(); $("sheet").scrollTop = 0; };
   // 찾기: 숫자면 서류 번호가 그 숫자로 시작하는 곳, 글자면 이름·장소에 들어 있는 곳 (입력 중에 화면을 다시 그리지 않고 줄만 숨김)
-  const applyQ = () => { const q = (S.listQ || "").trim().toLowerCase(); box.querySelectorAll(".item:not(.ghost-row)").forEach((el) => { el.style.display = !q || (/^\d+$/.test(q) ? el.dataset.doc.startsWith(q) : el.dataset.q.includes(q)) ? "" : "none"; }); };
+  // 11-20 GPT FigCraft 보드 5: 찾는 중에는 '검색 결과 N건 · 전체 M건', 0건이면 '일치하는 서류가 없어요 · [검색어 지우기]'
+  const applyQ = () => {
+    const q = (S.listQ || "").trim().toLowerCase(); let hit = 0;
+    box.querySelectorAll(".item:not(.ghost-row)").forEach((el) => { const on = !q || (/^\d+$/.test(q) ? el.dataset.doc.startsWith(q) : el.dataset.q.includes(q)); el.style.display = on ? "" : "none"; if (on) hit++; });
+    const note = box.querySelector(".q-note"); if (!note || !q) return;
+    const scope = f === "left" ? "미처리" : f === "again" ? "재방문 대기" : "전체";
+    note.innerHTML = `<b>'${esc(S.listQ.trim())}' 검색 결과 ${hit}건</b> · ${scope} ${shown.length}건 중`;
+    if (!hit) { note.insertAdjacentHTML("afterend", `<div class="q-empty">일치하는 서류가 없어요 <button class="ghost" id="q-clear">검색어 지우기</button></div>`); $("q-clear").onclick = () => $("top-q-x").click(); }
+  };
   box.querySelectorAll(".fchip").forEach((b) => (b.onclick = () => { S.listFilter = b.dataset.f; S.ghost = null; render(); $("sheet").scrollTop = 0; }));
   const shown = S.order.filter((i) => f === "all" || (f === "left" ? !S.done[i] : resultOf(i) && resultOf(i) !== "ok"));
   if (!shown.length && !S.ghost) box.insertAdjacentHTML("beforeend", `<div class="hint" style="padding:14px 0">${f === "left" ? "미처리 곳이 없어요." : f === "again" ? "재방문 대기 곳이 없어요." : "해당하는 곳이 없어요."}</div>`);
