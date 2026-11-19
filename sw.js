@@ -2,7 +2,7 @@
    - 화면 파일(html/js/css)은 인터넷이 되면 새로 받고(3초 안에), 안 되면 저장본
    - plan.enc.txt(암호화된 방문표)는 인터넷이 되면 새로 받고, 안 되면 마지막으로 받은 것을 씀 */
 const CACHE = "songdal-v2";
-const SHELL = ["./", "index.html", "app.js", "map.js", "style.css", "config.js"];
+const SHELL = ["./", "index.html", "app.js", "map.js", "style.css", "config.js", "manifest.json", "icon-180.png", "icon-192.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => Promise.all(SHELL.map((u) => c.add(u).catch(() => null)))).then(() => self.skipWaiting()));
