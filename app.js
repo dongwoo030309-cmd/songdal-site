@@ -558,8 +558,12 @@ function renderReorder(box) {
   if (cur) {
     const dm = Math.round((sim.finish - cur.finish) / 60), lim = S.plan.return_by;
     const dTxt = dm === 0 ? "마침 시각 같음" : `${Math.abs(dm)}분 ${dm > 0 ? "늦어짐" : "빨라짐"}`;
-    const overTxt = cur.over || sim.over ? ` · 기한 넘김 ${cur.over}곳 → <b>${sim.over}곳</b>` : sim.finish > lim ? ` · 기한 ${mins(sim.finish - lim)} 넘김` : "";
-    diff = `<div class="reo-diff${dm > 0 || sim.over > cur.over ? " worse" : ""}"><b class="t">순서 바뀜 · 아직 적용 전</b><span>마침 ${fin(cur)} → <b>${fin(sim)}</b> (${dTxt})${overTxt}</span></div>`;
+    // 11-20 GPT FigCraft 보드 6: '아직 적용 전 · 9분 늦어짐' → '마침 A → B' → '기한 넘김 N곳 · 바꾸기 전과 같음' 순서, 늘 세 줄(끄는 동안 높이가 안 바뀌게)
+    const a = fin(cur), b = fin(sim), nd = "다음 날 ", bShort = a.startsWith(nd) && b.startsWith(nd) ? b.slice(nd.length) : b;
+    const dOver = sim.over - cur.over;
+    const overTxt = cur.over || sim.over ? `기한 넘김 ${sim.over}곳 · ${dOver === 0 ? "바꾸기 전과 같음" : dOver > 0 ? `${dOver}곳 늘어남` : `${-dOver}곳 줄어듦`}`
+      : sim.finish > lim ? `기한 ${mins(sim.finish - lim)} 넘김` : `퇴근 기한(${hhmm(lim)}) 안에 마침`;
+    diff = `<div class="reo-diff${dm > 0 || dOver > 0 ? " worse" : ""}"><b class="t">아직 적용 전 · ${dTxt}</b><span class="l">마침 ${a} → <b>${bShort}</b></span><span class="l">${overTxt}</span></div>`;
   }
   box.innerHTML = `<div class="reo-head">
       <button class="reo-x" id="reo-cancel" aria-label="편집 취소">✕ 취소</button>
@@ -659,10 +663,14 @@ function renderList(etas) {
   if (S.reorder) return renderReorder(box);
   const rem = remaining(), cnt = resultCounts(), nAgain = cnt.absent + cnt.addr;
   const f = S.listFilter || "all";
+  // 11-20 GPT FigCraft 보드 5: 퇴근 기한 초과가 여러 줄이면 위에서 한 번만 요약, 줄마다는 짧게(모두 넘기면 줄에선 뺌). 직접 정한 시간·'오늘 중'은 줄마다 그대로
+  const overN = rem.filter((i) => etas[i] && etas[i].over).length, allOver = overN > 0 && overN === rem.length, sumOver = overN >= 2;
+  const overBox = sumOver ? `<div class="over-sum">⚠ ${allOver ? `남은 ${overN}곳 모두` : `남은 ${rem.length}곳 중 ${overN}곳`} 퇴근 기한 초과<small>퇴근 기한 ${hhmm(S.plan.return_by)} · 자정을 넘기면 '다음 날'로 표시${allOver ? "" : " · 넘기는 줄에 '기한 초과'"}</small></div>` : "";
+  const rowLate = (st, e) => sumOver ? lateBits(st, e).filter((b) => !(allOver && b.t === "퇴근 기한 초과")).map((b) => ` · <b class="lateb${b.strict ? " strict" : ""}">${esc(b.t === "퇴근 기한 초과" ? "기한 초과" : b.t)}</b>`).join("") : lateHtml(st, e);
   const chip = (key, label) => `<button class="fchip${f === key ? " on" : ""}" data-f="${key}">${label}</button>`;
   box.innerHTML = `${S.listQ ? `<div class="hint q-note">'${esc(S.listQ)}' 찾는 중 · 위 찾기 창의 ✕ 로 지워요</div>` : ""}
     <div class="filters">${chip("all", `전체 ${S.order.length}`)}${chip("left", `미처리 ${rem.length}`)}${chip("again", `재방문 대기 ${nAgain}`)}</div>
-    <div class="sum">${esc(countsText(cnt))} · 남음 ${rem.length}${rem.length >= 2 ? ` <button class="ghost reo-on" id="reo-on">✎ 순서 편집</button>` : ""}</div>`;
+    <div class="sum">${esc(countsText(cnt))} · 남음 ${rem.length}${rem.length >= 2 ? ` <button class="ghost reo-on" id="reo-on">✎ 순서 편집</button>` : ""}</div>${overBox}`;
   if ($("reo-on")) $("reo-on").onclick = () => { S.reorder = true; S.ghost = null; render(); $("sheet").scrollTop = 0; };
   // 찾기: 숫자면 서류 번호가 그 숫자로 시작하는 곳, 글자면 이름·장소에 들어 있는 곳 (입력 중에 화면을 다시 그리지 않고 줄만 숨김)
   // 11-20 GPT FigCraft 보드 5: 찾는 중에는 '검색 결과 N건 · 전체 M건', 0건이면 '일치하는 서류가 없어요 · [검색어 지우기]'
@@ -696,7 +704,7 @@ function renderList(etas) {
     const rk = resultOf(i);
     const div = document.createElement("div"); div.className = "item" + (done ? " done" : "") + (rk && rk !== "ok" ? " again" : "") + (cur ? " cur" : "");
     div.dataset.doc = String(docNumber(i)); div.dataset.i = String(i); div.dataset.q = `${st.label || ""} ${st.place || ""}`.toLowerCase();
-    div.innerHTML = `<div class="n">${docNumber(i)}</div><div class="t"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b>${st.label && st.place ? " · " + esc(st.place) : ""}<small>${st.custom ? `⏰ 직접 ${esc(st.custom)}` : esc(st.rule)}${st.door && st.door.length ? " · 출입 " + esc(st.door[0].code) : ""}${done ? ` · <span class="rk ${rk}">${RESULTS[rk]}</span> ${hhmm(S.done[i])}${fromPrev(i) ? ` <span class="from-prev">↺ 앞 방문표에서</span>` : ""}` : e ? ` · 도착 ${hhmm(e.arrive)}${e.wait > 60 ? ` · <b class="from">${hhmm(e.begin)}부터 송달</b>` : ""}${lateHtml(st, e)}` : ""}${triesText(i) ? ` · <span class="rk absent">재방문</span> (${esc(triesText(i))})` : ""}</small></div>${done && rk !== "ok" ? `<button class="again">다시 방문…</button>` : done ? `<span class="more" aria-hidden="true">›</span>` : `<button class="ghost go">보기</button>`}`;
+    div.innerHTML = `<div class="n">${docNumber(i)}</div><div class="t"><b>${esc(st.label || st.place || `서류 ${docNumber(i)}번`)}</b>${st.label && st.place ? " · " + esc(st.place) : ""}<small>${cur ? `<b class="nextv">다음 방문</b> · ` : ""}${st.custom ? `⏰ 직접 ${esc(st.custom)}` : esc(st.rule)}${st.door && st.door.length ? " · 출입 " + esc(st.door[0].code) : ""}${done ? ` · <span class="rk ${rk}">${RESULTS[rk]}</span> ${hhmm(S.done[i])}${fromPrev(i) ? ` <span class="from-prev">↺ 앞 방문표에서</span>` : ""}` : e ? ` · 도착 ${hhmm(e.arrive)}${e.wait > 60 ? ` · <b class="from">${hhmm(e.begin)}부터 송달</b>` : ""}${rowLate(st, e)}` : ""}${triesText(i) ? ` · <span class="rk absent">재방문</span> (${esc(triesText(i))})` : ""}</small></div>${done && rk !== "ok" ? `<button class="again">다시 방문…</button>` : done ? `<span class="more" aria-hidden="true">›</span>` : `<button class="ghost go">보기</button>`}`;
     const ag = div.querySelector("button.again"), go = div.querySelector("button.go");
     if (ag) ag.onclick = (ev) => { ev.stopPropagation(); S.ghost = null; const h = div.offsetHeight; askRevisit(i); S.ghostDraft = { slot: n, h }; };
     if (go) go.onclick = () => { S.ghost = null; S.selected = i; S.showList = false; render(); fitLeg(i); };
@@ -1074,19 +1082,27 @@ function showDemo(name) {
 /* ---------- 시작 ---------- */
 if (!LOCAL && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});   // Safari 가 저장공간을 비우지 않도록 요청
+/* 네이버 지도 대신 OpenStreetMap 일 때(11-20 GPT FigCraft 보드 1): 큰 알림은 이 아이폰에서 처음 한 번만, 그 뒤엔 왼쪽 아래 작은 표시만
+   — 큰 알림이 다음 방문지 핀을 가렸음 */
+function mapFallbackNotice() {
+  if (S.fallbackShown) return; S.fallbackShown = true;
+  if ($("map-src")) $("map-src").classList.remove("hidden");
+  let told = false; try { told = localStorage.getItem("songdal_osm_told") === "1"; localStorage.setItem("songdal_osm_told", "1"); } catch (e) {}
+  if (!told) toast(S.fallbackNote + " — 다음부터는 지도 왼쪽 아래 작은 표시로만 알려요", null, null, 5000);
+}
 async function boot() {
   try {
     S.plan = await loadPlan();
   } catch (e) { if (e.message !== "gate") { showGate(e.message); $("gate-token").classList.add("hidden"); $("gate-save").textContent = "다시 시도"; $("gate-save").onclick = () => location.reload(); } return; }
   $("gate").classList.add("hidden"); $("app").classList.remove("hidden");
   loadDone();
-  if (!S.map) S.map = await SongdalMap.create($("map"), { clientId: S.plan.naver_client_id, onFallback: () => { S.fallbackNote = "네이버 지도 대신 OpenStreetMap 으로 표시 중"; if (S.plan) toast(S.fallbackNote); } });
+  if (!S.map) S.map = await SongdalMap.create($("map"), { clientId: S.plan.naver_client_id, onFallback: () => { S.fallbackNote = "네이버 지도 대신 OpenStreetMap 으로 표시 중"; if (S.plan) mapFallbackNotice(); } });
   render(); followNext(); setTimeout(() => { S.map.resize(); followNext(); }, 300);   // 열자마자 다음 방문지가 지도에 보이게 (전체는 ⋯ → 전체 경로 보기)
   // 확대 수준이 바뀌면 겹친 경로선 간격(화면 5px)을 다시 계산해 그림
   if (S.map.onZoom && !S.zoomHooked) { S.zoomHooked = true; S.map.onZoom((z) => { clearTimeout(S.zoomT); S.zoomT = setTimeout(() => { if (!S.animating && Math.round(z) !== S.zoomDrawn) drawRoute(); }, 150); }); }
   $("map-next").onclick = () => { S.selected = null; render(); followNext(); };
   $("map-me").onclick = showMe;
-  if (S.fallbackNote) toast(S.fallbackNote);
+  if (S.fallbackNote) mapFallbackNotice();
   if (S.carried) {
     const c = S.carried; S.carried = null;
     toast(c.unknown ? `방문표가 바뀌어서 이전 마침 ${c.lost}건을 옮기지 못했어요. 마친 곳은 다시 눌러 주세요.`
