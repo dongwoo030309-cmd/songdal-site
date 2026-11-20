@@ -49,6 +49,11 @@
   </header>
   <div class="map-btns bottom"><button class="round" id="btn-fit" title="전체 경로 보기" aria-label="전체 경로 보기">전체</button><button class="round" id="map-next" title="다음 곳으로 지도 이동" aria-label="다음 곳">다음</button><button class="round" id="map-me" title="내 위치" aria-label="내 위치">◎</button></div>
   <div id="note" class="note hidden"></div>
+  <!-- 이 아이폰에 기록을 저장하지 못했을 때(저장 공간 부족) — 일반 알림과 따로, 저장될 때까지 보임 (11-20) -->
+  <div id="save-warn" class="save-warn hidden" role="alert">
+    <div class="sw-t"><b>⚠ 이 아이폰에 저장 못 했어요</b><span id="save-warn-sub">기록은 지금 화면에만 있어요. 닫기 전에 맥에서 확인해 주세요.</span></div>
+    <button id="save-retry">다시 저장</button>
+  </div>
   <div id="recalc" class="recalc hidden"></div>
   <div id="send" class="recalc hidden"></div>
 
