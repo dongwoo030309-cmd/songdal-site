@@ -418,3 +418,11 @@ body.note-on.reo-bar-on .app.listing #note { bottom: calc(var(--foot) + 8px); }
 body.save-warn-on #note, body.save-warn-on .map-wrap #note { top: calc(env(safe-area-inset-top) + 108px + var(--sw-h, 88px)); }
 body.save-warn-on .app.listing #note { top: auto; }
 .app.listing .save-warn { right: 12px; }
+/* 11-20 GPT FigCraft 보드 1·5·6 */
+.map-src { bottom: calc(var(--foot) + var(--sheet-h) + 48px); font-weight: 500; color: #6b6b66; }
+.list .over-sum { margin: 2px 0 8px; padding: 9px 12px; border-radius: 10px; background: #fde3e0; color: #b42318; font-size: 15px; font-weight: 700; }
+.list .over-sum small { display: block; margin-top: 2px; font-size: 12.5px; font-weight: 500; color: #8a2a23; }
+.list .item.cur { background: #eef6f2; border-radius: 10px; margin: 0 -8px; padding-left: 8px; padding-right: 8px; }
+.list .item small .nextv { color: var(--g); }
+.reo-head .reo-diff .l { display: block; }
+.reo-head .reo-diff .t { font-size: 14px; }
