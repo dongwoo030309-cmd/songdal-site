@@ -410,3 +410,11 @@ body.note-on.reo-bar-on .app.listing #note { bottom: calc(var(--foot) + 8px); }
 .list .q-empty { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 2px 0 8px; padding: 8px 10px; border-radius: 10px; background: #f6f6f2; font-size: 14px; color: var(--ink); }
 .list .q-empty button { min-height: 44px; padding: 0 14px; white-space: nowrap; }
 .next .act #btn-skip { border-color: #8f8f88; color: #2f2f2b; }   /* 회색이라 못 누르는 단추처럼 보이지 않게 테두리·글자 진하게 */
+/* 11-20 저장 실패 안내(GPT FigCraft 보드 4): 알림 자리 위에 따로, 저장될 때까지. 알림은 그 아래로 비켜남 */
+.save-warn { position: fixed; left: 12px; right: 66px; top: calc(env(safe-area-inset-top) + 100px); z-index: 1470; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 14px; background: #fde3e0; border: 1.5px solid #b42318; color: #8a2a23; box-shadow: 0 4px 16px rgba(0,0,0,.18); }
+.save-warn .sw-t { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.4; } .save-warn .sw-t b { display: block; font-size: 15px; color: #b42318; white-space: nowrap; }
+.save-warn button { flex: none; min-height: 44px; padding: 0 14px; background: #fff; color: #b42318; border: 1.5px solid #b42318; font-weight: 700; }
+body.save-warn-on #note, body.save-warn-on .map-wrap #note { top: calc(env(safe-area-inset-top) + 108px + var(--sw-h, 88px)); }
+body.save-warn-on .app.listing #note { top: auto; }
+.app.listing .save-warn { right: 12px; }
