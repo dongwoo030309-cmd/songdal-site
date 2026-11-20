@@ -292,14 +292,23 @@ function saveAll(pairs) {
 }
 function saveDone(quiet, extra) {
   const K = storeKey();
+  // 앞서 저장에 실패한 '같이 저장할 칸'(보관 묶음·옮김 표시)은 성공할 때까지 매번 함께 다시 시도 (11-20 GPT 지적:
+  // 방문표를 옮기다 실패한 뒤 다시 열지 않고 기록하면, 기록·대응 정보만 새로 저장되고 보관 묶음은 빠져 예전 기록이 사라졌음)
+  const pend = { ...(S.pendingExtra || {}) }; (extra || []).forEach(([k, v]) => { pend[k] = v; });
   const pairs = (hist) => [[K + "_res", JSON.stringify(S.res || {})], [K + "_tries", JSON.stringify(S.tries || {})], [K, JSON.stringify(S.done)],
-    [K + "_order", JSON.stringify(S.order)], [K + "_hist", hist], [K + "_plan", JSON.stringify({ sig: planSig(), keys: planKeys() })], ...(extra || [])];
+    [K + "_order", JSON.stringify(S.order)], [K + "_hist", hist], [K + "_plan", JSON.stringify({ sig: planSig(), keys: planKeys() })], ...Object.entries(pend)];
   // 되돌리기 목록이 커서 안 들어가면 그것만 비우고 한 번 더(기록·대응 정보가 더 중요)
   const ok = saveAll(pairs(JSON.stringify(S.history || []))) || (!!(S.history || []).length && saveAll(pairs("[]")));
-  S.saveFailed = !ok;
-  if (!ok && typeof toast === "function") toast("⚠ 아이폰 저장 공간이 부족해 기록을 이 아이폰에 저장하지 못했어요. 맥으로 자동 저장은 계속 시도해요. 이 화면을 닫기 전에 맥에서 결과가 들어왔는지 확인해 주세요.", null, null, 15000);
+  S.saveFailed = !ok; S.pendingExtra = ok ? null : pend;
+  showSaveWarn();
   if (quiet !== "quiet") scheduleSync();
   return ok;
+}
+/* 저장 실패 안내(11-20 GPT FigCraft 보드 4): 일반 알림(#note)에 덮이지 않게 따로, 저장될 때까지 계속 보임 + [다시 저장] */
+function showSaveWarn() {
+  if (typeof document === "undefined" || typeof $ !== "function" || !$("save-warn")) return;
+  $("save-warn").classList.toggle("hidden", !S.saveFailed); document.body.classList.toggle("save-warn-on", !!S.saveFailed);
+  if (S.saveFailed) document.documentElement.style.setProperty("--sw-h", $("save-warn").offsetHeight + "px");   // 일반 알림은 이 높이만큼 아래로
 }
 /* 바꾸기 직전 상태를 남겨 두면 '되돌리기'로 그대로 돌아감 (마침·미루기·순서 바꾸기·취소 모두) */
 function snapshot(label) { S.redo = []; S.history = S.history || []; S.history.push({ done: { ...S.done }, res: { ...(S.res || {}) }, tries: JSON.parse(JSON.stringify(S.tries || {})), order: [...S.order], label }); if (S.history.length > 50) S.history.shift(); }
@@ -924,6 +933,10 @@ function syncStatus(state, extra) {
   SYNC.state = state; if (state === "ok") SYNC.at = new Date();
   const el = $("sync-status"); if (!el) return;
   const t = SYNC.at ? `${String(SYNC.at.getHours()).padStart(2, "0")}:${String(SYNC.at.getMinutes()).padStart(2, "0")}` : "";
+  // 이 아이폰 저장이 실패한 상태면 안내에 '맥에는 저장됐는지'를 함께 (11-20)
+  if (S.saveFailed && $("save-warn-sub")) $("save-warn-sub").textContent = state === "ok"
+    ? `맥에는 저장됐어요(${t}). [다시 저장]을 눌러 보세요.`
+    : "기록은 지금 화면에만 있어요. 닫기 전에 맥에서 확인해 주세요.";
   el.className = "sync " + state;
   el.textContent = state === "ok" ? `☁ 맥으로 자동 저장됨 ${t}` : state === "wait" ? "☁ 저장 대기 중 (인터넷 연결되면 저장)" : state === "busy" ? "☁ 저장 중…" : state === "pending" ? "☁ 곧 저장해요" : state === "err" ? `☁ 자동 저장 안 됨: ${extra}` : "";
 }
@@ -1038,6 +1051,7 @@ function showDemo(name) {
   if (["progress", "picked", "list", "again", "collapsed", "recalc", "reorder", "restored", "reomoved"].includes(name)) { mark(["ok", "absent", "addr", "ok"]); fakeDoor(remaining()[0]); }
   // 11-20: 앞 방문표에서 옮겨 온 기록 표시(목록) · 순서를 옮긴 뒤 '아직 적용 전' 띠(순서 편집)
   if (name === "restored") { S.showList = true; S.from = {}; S.order.filter((i) => S.done[i]).slice(0, 2).forEach((i) => (S.from[keyOf(stopOf(i))] = S.done[i])); }
+  if (name === "savefail") { mark(["ok"]); S.saveFailed = true; showSaveWarn(); toast("서류 1번 전달 완료", "되돌리기", undo, 60000); }   // 11-20: 저장 실패 안내가 알림과 따로 보이는지
   if (name === "reomoved") { const r = remaining(), d = r.slice(); if (d.length > 3) d.splice(3, 0, d.shift()); S.showList = true; S.reorder = true; S.reo = { base: r.slice(), draft: d, hist: [r.slice()], redo: [], sel: new Set() }; }
   if (name === "picked") S.selected = remaining()[4];
   // 늦은 밤(퇴근 기한 15분 전부터 3곳 기록) — 카드 요약 줄·한 줄 보기·목록 알림·자정 넘김 '다음 날' 확인용 (11-19)
@@ -1092,6 +1106,7 @@ async function boot() {
   $("btn-card").onclick = () => { S.ghost = null; if (!S.showList && !S.collapsed && !S.mini) return; animateSheet(() => { setMini(false); S.showList = false; S.reorder = false; setCollapsed(false); render(); }); $("sheet").scrollTop = 0; };
   $("btn-dock-recalc").onclick = () => { if (remaining().length >= 2) openRecalc(true); };
   $("btn-dock-undo").onclick = () => undo();
+  $("save-retry").onclick = () => { if (saveDone()) toast("이 아이폰에 저장했어요"); else toast("아직 저장 공간이 부족해요. 맥 자동 저장은 계속 시도해요."); };
   // 위 찾기 창: 서류 번호(숫자)나 이름·장소로 오늘 방문표 안에서 찾음 → 목록이 열리고 맞는 줄만 보임
   const q = $("top-q"), qx = $("top-q-x");
   q.addEventListener("input", () => {
